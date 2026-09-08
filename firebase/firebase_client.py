@@ -26,9 +26,9 @@ class FirebaseClient:
 
         if not cred_path.exists():
             if not FirebaseClient._warned_missing:
-                logger.warning(
-                    f"Firebase credentials file not found at: {cred_path}. "
-                    "Cloud sync will run in offline mode (buffering to local SQLite) until service_account.json is added."
+                logger.info(
+                    f"Firebase credentials not found at: {cred_path}. "
+                    f"Realtime sync will use Direct Cloud REST Mode ({FIREBASE_DATABASE_URL})."
                 )
                 FirebaseClient._warned_missing = True
             return False

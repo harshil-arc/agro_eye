@@ -80,11 +80,11 @@ FIREBASE_CREDENTIALS_PATH = os.environ.get(
 )
 FIREBASE_DATABASE_URL = os.environ.get(
     "FIREBASE_DB_URL", 
-    "https://plant-detection-system-default-rtdb.firebaseio.com/"
+    "https://sample-629de-default-rtdb.firebaseio.com/"
 )
 FIREBASE_STORAGE_BUCKET = os.environ.get(
     "FIREBASE_STORAGE_BUCKET", 
-    "plant-detection-system.appspot.com"
+    "sample-629de.appspot.com"
 )
 
 # ============================================================
