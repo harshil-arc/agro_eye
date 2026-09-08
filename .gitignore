@@ -1,0 +1,15 @@
+# Environment Variables & API Keys
+.env
+config/service_account.json
+
+# Local SQLite & Snapshots
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/snapshots/*.jpg
+
+# Python cache & virtual environment
+__pycache__/
+*.pyc
+venv/
+.venv/

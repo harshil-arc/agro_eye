@@ -1,0 +1,16 @@
+[Unit]
+Description=Raspberry Pi Plant Detection and Monitoring System
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/plant_system
+ExecStart=/home/pi/plant_system/venv/bin/python main.py
+Restart=always
+RestartSec=10
+Environment=ENABLE_GUI_DISPLAY=False
+Environment=ROBOFLOW_API_KEY=FHXMDlKX559SGvrIR5fB
+
+[Install]
+WantedBy=multi-user.target
