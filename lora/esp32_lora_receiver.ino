@@ -353,16 +353,42 @@ void renderSensorScreen() {
   display.print(remainingSec);
   display.print(F("s"));
 
-  // Header Divider
-  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+  // Check if no data received yet OR if signal timed out (>15s since last packet)
+  bool isSignalLost = !latestSensors.has_data || (millis() - latestSensors.last_packet_time > 15000);
 
   if (!latestSensors.has_data) {
-    display.setCursor(15, 25);
-    display.println(F("Waiting for LoRa"));
-    display.setCursor(20, 38);
-    display.println(F("telemetry..."));
+    // Stage 1: Starting / Initial search
+    display.setTextSize(1);
+    display.setCursor(10, 18);
+    display.println(F("[ STARTING NODE ]"));
+
+    display.setCursor(4, 32);
+    display.println(F("Searching LoRa 433M"));
+
+    // Animated dots based on time
+    int dotCount = (millis() / 400) % 4;
+    display.setCursor(10, 48);
+    display.print(F("Listening"));
+    for (int i = 0; i < dotCount; i++) {
+      display.print(F("."));
+    }
+  } else if (isSignalLost) {
+    // Stage 2: Signal Lost / Out of Range (>15s without new packets)
+    display.setTextSize(1);
+    display.setCursor(8, 16);
+    display.println(F("! NO LORA SIGNAL !"));
+
+    display.setCursor(4, 30);
+    display.println(F("Signal Lost / Timeout"));
+
+    display.setCursor(0, 44);
+    display.print(F("Last Seen: "));
+    display.println(latestSensors.time_str);
+
+    display.setCursor(0, 54);
+    display.print(F("Check Pi Transmitter"));
   } else {
-    // Row 1: Temperature & Humidity
+    // Stage 3: Live Signal Active
     display.setCursor(0, 15);
     display.print(F("Temp: "));
     display.print(latestSensors.temp, 1);
