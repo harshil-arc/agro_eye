@@ -245,8 +245,11 @@ class ESP32SensorReceiver:
                         self.last_received_time = time.time()
 
             except Exception as e:
+                if not self.running:
+                    break
                 self.last_error = f"{type(e).__name__}: {e}"
-                logger.error(f"Error reading from Arduino/ESP32 on {self.connected_port}: {self.last_error}")
+                port_str = str(self.connected_port) if self.connected_port else "USB"
+                logger.error(f"Error reading from Arduino/ESP32 on {port_str}: {self.last_error}")
                 if self.ser:
                     try:
                         self.ser.close()
@@ -255,6 +258,7 @@ class ESP32SensorReceiver:
                 self.ser = None
                 self.connected_port = None
                 time.sleep(1.0)
+
 
     def get_latest_readings(self) -> Optional[Dict[str, Any]]:
         """Returns the most recent genuine reading from the ESP32 stream if available."""

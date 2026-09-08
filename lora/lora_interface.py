@@ -1,11 +1,27 @@
+import os
+import sys
 import time
 import json
+from pathlib import Path
 from typing import Optional
 from config import (
     LORA_FREQUENCY, LORA_SPREADING_FACTOR, LORA_BANDWIDTH,
     LORA_CODING_RATE, LORA_SYNC_WORD, LORA_TX_POWER
 )
 from utils.logger import logger
+
+# Automatically discover and add RaspberryPi-LoRaLib to sys.path if cloned in home or parent directories
+for candidate_dir in [
+    os.path.expanduser("~/RaspberryPi-LoRaLib"),
+    os.path.expanduser("~/RaspberryPi-LoRaLib/loralibPi5"),
+    "/home/gullu/RaspberryPi-LoRaLib",
+    "/home/pi/RaspberryPi-LoRaLib",
+    str(Path(__file__).resolve().parent.parent / "RaspberryPi-LoRaLib"),
+    str(Path(__file__).resolve().parent.parent.parent / "RaspberryPi-LoRaLib")
+]:
+    if os.path.exists(candidate_dir) and candidate_dir not in sys.path:
+        sys.path.insert(0, candidate_dir)
+
 
 class LoRaInterface:
     """
