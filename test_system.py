@@ -126,13 +126,13 @@ class TestPlantSystem(unittest.TestCase):
         finally:
             mgr.stop()
 
-    def test_database_50_entries_fifo_limit(self):
-        """Verify that SQLite strictly caps table size at maximum 50 newest entries."""
-        for i in range(1, 66):  # Insert 65 records
+    def test_database_200_entries_fifo_limit(self):
+        """Verify that SQLite strictly caps table size at maximum 200 newest entries."""
+        for i in range(1, 221):  # Insert 220 records
             data = {
-                "timestamp": f"2026-09-07T12:00:{i:02d}Z",
+                "timestamp": f"2026-09-07T12:{i // 60:02d}:{i % 60:02d}Z",
                 "source": "esp32_sensor",
-                "temperature": float(20.0 + (i * 0.1)),
+                "temperature": float(20.0 + (i * 0.05)),
                 "humidity": 60.0,
                 "soil_moisture": 50.0,
                 "soil_raw": 2000 + i,
@@ -142,12 +142,14 @@ class TestPlantSystem(unittest.TestCase):
             self.repo.insert_sensor_reading(data)
 
         # Query all records
-        all_records = self.repo.get_unsynced_sensor_readings(limit=100)
-        self.assertEqual(len(all_records), 50, f"Expected 50 entries, found {len(all_records)}")
+        all_records = self.repo.get_unsynced_sensor_readings(limit=250)
+        self.assertEqual(len(all_records), 200, f"Expected 200 entries, found {len(all_records)}")
 
-        # Verify the newest entry (iteration 65) is preserved
+        # Verify the newest entry (iteration 220) is preserved
         latest = get_latest_sensor_readings(db_path=self.test_db_path, limit=1)
-        self.assertEqual(latest[0]["soil_raw"], 2065)
+        self.assertEqual(latest[0]["soil_raw"], 2220)
+
+
 
     def test_lora_packet_formatting(self):
         alert_mgr = LoRaAlertManager(cooldown=0.1)

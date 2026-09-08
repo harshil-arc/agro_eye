@@ -208,10 +208,10 @@ def insert_sensor_reading(data: Dict[str, Any], db_path: Optional[str] = None) -
         ))
         inserted_id = cursor.lastrowid
 
-        # Strict FIFO Limit: Keep only the 50 newest records, delete oldest
+        # Strict FIFO Limit: Keep only the 200 newest records, delete oldest
         cursor.execute("""
             DELETE FROM sensor_readings WHERE id NOT IN (
-                SELECT id FROM sensor_readings ORDER BY id DESC LIMIT 50
+                SELECT id FROM sensor_readings ORDER BY id DESC LIMIT 200
             );
         """)
 
@@ -226,7 +226,7 @@ def insert_sensor_reading(data: Dict[str, Any], db_path: Optional[str] = None) -
 
 def insert_detection(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
     """
-    Insert an AI detection result into detections and prune to maximum 50 newest entries.
+    Insert an AI detection result into detections and prune to maximum 200 newest entries.
     Returns the newly inserted row ID.
     """
     conn = get_db_connection(db_path)
@@ -257,10 +257,10 @@ def insert_detection(data: Dict[str, Any], db_path: Optional[str] = None) -> int
         ))
         inserted_id = cursor.lastrowid
 
-        # Strict FIFO Limit: Keep only the 50 newest records
+        # Strict FIFO Limit: Keep only the 200 newest records
         cursor.execute("""
             DELETE FROM detections WHERE id NOT IN (
-                SELECT id FROM detections ORDER BY id DESC LIMIT 50
+                SELECT id FROM detections ORDER BY id DESC LIMIT 200
             );
         """)
 
@@ -275,7 +275,7 @@ def insert_detection(data: Dict[str, Any], db_path: Optional[str] = None) -> int
 
 def insert_system_event(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
     """
-    Insert a system event/log entry into system_events and prune to maximum 50 newest entries.
+    Insert a system event/log entry into system_events and prune to maximum 200 newest entries.
     Returns the newly inserted row ID.
     """
     conn = get_db_connection(db_path)
@@ -299,7 +299,7 @@ def insert_system_event(data: Dict[str, Any], db_path: Optional[str] = None) -> 
 
         cursor.execute("""
             DELETE FROM system_events WHERE id NOT IN (
-                SELECT id FROM system_events ORDER BY id DESC LIMIT 50
+                SELECT id FROM system_events ORDER BY id DESC LIMIT 200
             );
         """)
 
@@ -313,7 +313,7 @@ def insert_system_event(data: Dict[str, Any], db_path: Optional[str] = None) -> 
 
 
 def insert_lora_alert(data: Dict[str, Any], db_path: Optional[str] = None) -> int:
-    """Insert a dispatched LoRa alert entry and prune to maximum 50 newest entries."""
+    """Insert a dispatched LoRa alert entry and prune to maximum 200 newest entries."""
     conn = get_db_connection(db_path)
     try:
         cursor = conn.cursor()
@@ -334,9 +334,10 @@ def insert_lora_alert(data: Dict[str, Any], db_path: Optional[str] = None) -> in
 
         cursor.execute("""
             DELETE FROM lora_alerts WHERE id NOT IN (
-                SELECT id FROM lora_alerts ORDER BY id DESC LIMIT 50
+                SELECT id FROM lora_alerts ORDER BY id DESC LIMIT 200
             );
         """)
+
 
         conn.commit()
         return inserted_id
