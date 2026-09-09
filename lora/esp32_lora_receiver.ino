@@ -8,10 +8,13 @@
  *
  * Features:
  *   - Continuous LoRa packet reception (never drops packets, auto re-arms RX mode).
- *   - Pushbutton Wake-up: Turns OLED ON for exactly 15 seconds.
+ *   - Pushbutton Wake-up: Turns OLED ON for exactly 15 seconds showing sensor telemetry.
+ *   - Automatic Emergency Wake-up: On newly detected disease, wakes OLED, shows the
+ *     Disease Alert ONCE for 5 seconds, then automatically returns to the live
+ *     Sensor Telemetry screen for the remainder of the 15-second window.
+ *   - Zero screen freezing / sticking: Routine telemetry never locks the screen.
  *   - Live countdown timer (15s -> 0s) and real-time metric updates.
  *   - True OLED Panel Power-Off on timeout.
- *   - Auto-wakes OLED on Emergency Disease Alert.
  * =================================================================================
  */
 
@@ -59,7 +62,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // -------------------------------------------------------------
 // DISPLAY & TIMING STATE
 // -------------------------------------------------------------
-const unsigned long DISPLAY_DURATION_MS = 15000; // 15 seconds timeout
+const unsigned long DISPLAY_DURATION_MS = 15000; // 15 seconds total display timeout
+const unsigned long ALERT_DURATION_MS   = 5000;  // 5 seconds alert screen duration before returning to sensors
 unsigned long displayStartTime = 0;
 unsigned long lastDisplayRefresh = 0;
 bool isDisplayActive = false;
@@ -78,6 +82,8 @@ struct SensorData {
   int soil_raw = 0;
   int mq = 0;
   float mq_v = 0.0;
+  String recent_disease = "None";
+  float recent_conf = 0.0;
   String time_str = "--:--:--";
   int rssi = 0;
   float snr = 0.0;
@@ -90,8 +96,10 @@ struct DiseaseAlert {
   String disease_name = "";
   float confidence = 0.0;
   String time_str = "";
-  bool is_active = false;
-  unsigned long alert_time = 0;
+  bool is_active = false;                     // True ONLY during the initial 5-second alert display
+  unsigned long alert_start_time = 0;
+  String last_seen_disease = "";
+  unsigned long last_alert_received_time = 0;
 } latestAlert;
 
 // -------------------------------------------------------------
@@ -182,6 +190,7 @@ void loop() {
       buttonState = reading;
       if (buttonState == LOW) {
         Serial.println(F("[BUTTON] Pressed! Waking OLED display for 15 seconds."));
+        latestAlert.is_active = false; // Always show regular sensor screen on button press
         turnDisplayOn();
       }
     }
@@ -194,9 +203,10 @@ void loop() {
 
     if (elapsed >= DISPLAY_DURATION_MS) {
       turnDisplayOff();
+      latestAlert.is_active = false;
       Serial.println(F("[OLED] 15s timeout reached -> Display turned OFF."));
     } else {
-      if (millis() - lastDisplayRefresh >= 250) {
+      if (millis() - lastDisplayRefresh >= 200) {
         lastDisplayRefresh = millis();
         updateOLED();
       }
@@ -243,13 +253,10 @@ void processIncomingLoRa() {
 
         const char* embedded_disease = doc["disease"] | "None";
         float embedded_conf = doc["conf"] | 0.0;
-        if (strcmp(embedded_disease, "None") != 0 && strlen(embedded_disease) > 0) {
-          latestAlert.disease_name = String(embedded_disease);
-          latestAlert.confidence = embedded_conf;
-          latestAlert.time_str = latestSensors.time_str;
-          latestAlert.is_active = true;
-          latestAlert.alert_time = millis();
-        }
+        latestSensors.recent_disease = String(embedded_disease);
+        latestSensors.recent_conf = embedded_conf;
+
+        // Note: Routine sensor packets NEVER lock or reactivate the alert screen!
 
         Serial.print(F("[LORA] Telemetry: Temp:"));
         Serial.print(latestSensors.temp, 1);
@@ -270,26 +277,36 @@ void processIncomingLoRa() {
         }
       }
 
-      // B. Emergency Disease Alert Packet
+      // B. Emergency Disease Alert Packet (Sent once per newly detected disease event)
       else if (strcmp(type, "ALERT") == 0) {
-        latestAlert.disease_name = String((const char*)(doc["disease"] | "Unknown"));
-        latestAlert.confidence = doc["conf"] | 0.0;
-        latestAlert.time_str = String((const char*)(doc["time"] | "--:--:--"));
-        latestAlert.is_active = true;
-        latestAlert.alert_time = millis();
+        String incomingDisease = String((const char*)(doc["disease"] | "Unknown"));
+        float incomingConf = doc["conf"] | 0.0;
+        String incomingTime = String((const char*)(doc["time"] | "--:--:--"));
+        unsigned long now = millis();
 
-        Serial.print(F("🚨 [EMERGENCY DISEASE ALERT] "));
-        Serial.print(latestAlert.disease_name);
-        Serial.print(F(" ("));
-        Serial.print(latestAlert.confidence * 100.0, 1);
-        Serial.print(F("%) at "));
-        Serial.print(latestAlert.time_str);
-        Serial.print(F(" | RSSI:"));
-        Serial.print(rssi);
-        Serial.println(F(" dBm"));
+        // Trigger alert pop-up only if it's a new disease or after cooldown
+        if (incomingDisease != latestAlert.last_seen_disease || (now - latestAlert.last_alert_received_time > 10000)) {
+          latestAlert.disease_name = incomingDisease;
+          latestAlert.confidence = incomingConf;
+          latestAlert.time_str = incomingTime;
+          latestAlert.is_active = true;
+          latestAlert.alert_start_time = now;
+          latestAlert.last_seen_disease = incomingDisease;
+          latestAlert.last_alert_received_time = now;
 
-        // Auto-wake OLED display on emergency alert
-        turnDisplayOn();
+          Serial.print(F("🚨 [EMERGENCY DISEASE ALERT] "));
+          Serial.print(latestAlert.disease_name);
+          Serial.print(F(" ("));
+          Serial.print(latestAlert.confidence * 100.0, 1);
+          Serial.print(F("%) at "));
+          Serial.print(latestAlert.time_str);
+          Serial.print(F(" | RSSI:"));
+          Serial.print(rssi);
+          Serial.println(F(" dBm"));
+
+          // Auto-wake OLED display (shows alert for 5s, then automatically switches to normal sensor readings)
+          turnDisplayOn();
+        }
       }
     } else {
       Serial.print(F("[LORA RAW] "));
@@ -326,11 +343,17 @@ void turnDisplayOff() {
 // RENDER APPROPRIATE SCREEN
 // -------------------------------------------------------------
 void updateOLED() {
-  if (latestAlert.is_active && (millis() - latestAlert.alert_time < 30000)) {
-    renderAlertScreen();
-  } else {
-    renderSensorScreen();
+  // Show alert screen strictly for ALERT_DURATION_MS (5s), then seamlessly revert to sensor screen
+  if (latestAlert.is_active) {
+    if (millis() - latestAlert.alert_start_time < ALERT_DURATION_MS) {
+      renderAlertScreen();
+      return;
+    } else {
+      // 5-second alert duration finished -> switch back to normal sensor screen
+      latestAlert.is_active = false;
+    }
   }
+  renderSensorScreen();
 }
 
 // -------------------------------------------------------------
@@ -389,35 +412,46 @@ void renderSensorScreen() {
     display.print(F("Check Pi Transmitter"));
   } else {
     // Stage 3: Live Signal Active
-    display.setCursor(0, 15);
+    // Row 1: Temperature & Humidity
+    display.setCursor(0, 14);
     display.print(F("Temp: "));
     display.print(latestSensors.temp, 1);
     display.print(F(" C"));
 
-    display.setCursor(78, 15);
+    display.setCursor(78, 14);
     display.print(F("H: "));
     display.print((int)latestSensors.hum);
     display.print(F("%"));
 
     // Row 2: Soil Moisture
-    display.setCursor(0, 28);
+    display.setCursor(0, 26);
     display.print(F("Soil Moist: "));
     display.print(latestSensors.soil, 1);
     display.print(F("%"));
 
-    // Row 3: MQ Gas / Air Quality
-    display.setCursor(0, 41);
-    display.print(F("Air Quality: "));
+    // Row 3: Air Quality / Recent Disease
+    display.setCursor(0, 38);
+    display.print(F("Air: "));
     display.print(latestSensors.mq);
 
+    if (latestSensors.recent_disease.length() > 0 && latestSensors.recent_disease != "None") {
+      display.setCursor(55, 38);
+      display.print(F("D:"));
+      String shortName = latestSensors.recent_disease;
+      if (shortName.length() > 9) {
+        shortName = shortName.substring(0, 9);
+      }
+      display.print(shortName);
+    }
+
     // Row 4: Signal & Timestamp Footer
-    display.drawLine(0, 52, 127, 52, SSD1306_WHITE);
-    display.setCursor(0, 55);
+    display.drawLine(0, 50, 127, 50, SSD1306_WHITE);
+    display.setCursor(0, 53);
     display.print(F("RSSI:"));
     display.print(latestSensors.rssi);
     display.print(F("dBm"));
 
-    display.setCursor(75, 55);
+    display.setCursor(75, 53);
     display.print(latestSensors.time_str);
   }
 
@@ -434,21 +468,32 @@ void renderAlertScreen() {
   display.fillRect(0, 0, 128, 12, SSD1306_WHITE);
   display.setTextColor(SSD1306_BLACK, SSD1306_WHITE);
   display.setTextSize(1);
-  display.setCursor(8, 2);
-  display.print(F("! DISEASE ALERT !"));
+  display.setCursor(4, 2);
+  display.print(F("! DISEASE DETECTED !"));
 
   display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 18);
+  display.setTextSize(1);
+  display.setCursor(0, 16);
   display.println(latestAlert.disease_name);
 
-  display.setCursor(0, 34);
+  display.setCursor(0, 32);
   display.print(F("Conf: "));
   display.print(latestAlert.confidence * 100.0, 1);
   display.print(F("%"));
 
-  display.setCursor(0, 48);
-  display.print(F("Time: "));
+  display.setCursor(72, 32);
+  display.print(F("T: "));
   display.print(latestAlert.time_str);
+
+  // Return countdown footer
+  long remainingAlert = (long)ALERT_DURATION_MS - (long)(millis() - latestAlert.alert_start_time);
+  int alertSec = (remainingAlert > 0) ? (remainingAlert / 1000 + 1) : 0;
+  display.drawLine(0, 48, 127, 48, SSD1306_WHITE);
+  display.setCursor(0, 53);
+  display.print(F("Sensors in "));
+  display.print(alertSec);
+  display.print(F("s..."));
 
   display.display();
 }
+
