@@ -11,7 +11,9 @@ from .sqlite_db import (
     get_detection_history,
     get_system_events,
     check_database_health,
-    get_utc_now_iso
+    get_utc_now_iso,
+    insert_disease_detection,
+    get_recent_disease_detections
 )
 from .repository import DatabaseRepository
 from .sync_worker import DatabaseSyncWorker
