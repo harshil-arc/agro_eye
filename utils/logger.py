@@ -1,9 +1,8 @@
 import logging
 import sys
 from pathlib import Path
-from config import LOG_FILE
 
-def setup_logger(name: str = "AgroEye", log_file: str = LOG_FILE, level: int = logging.INFO) -> logging.Logger:
+def setup_logger(name: str = "PlantSystem", log_file: str = None, level: int = logging.INFO) -> logging.Logger:
     """Configures and returns a centralized logger with console and file output."""
     logger = logging.getLogger(name)
     if logger.handlers:
@@ -23,16 +22,12 @@ def setup_logger(name: str = "AgroEye", log_file: str = LOG_FILE, level: int = l
 
     # File Handler
     if log_file:
-        try:
-            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-            fh = logging.FileHandler(log_file, encoding="utf-8")
-            fh.setLevel(level)
-            fh.setFormatter(formatter)
-            logger.addHandler(fh)
-        except Exception as e:
-            print(f"Warning: Could not configure file logging to {log_file}: {e}")
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_file)
+        fh.setLevel(level)
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
 
     return logger
 
 logger = setup_logger()
-

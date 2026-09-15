@@ -2,28 +2,14 @@
 .env
 config/service_account.json
 
-# Local SQLite Databases & WAL files
-*.db
-*.db-wal
-*.db-shm
+# Local SQLite & Snapshots
 data/*.db
-database/*.db
-
-# Snapshots & Logs
-snapshots/*.jpg
-snapshots/*.png
-logs/*.log
-logs/*.txt
-
-# Trained Model Weights (Large binary files)
-models/*.pt
-models/*.onnx
-models/*.engine
+data/*.db-wal
+data/*.db-shm
+data/snapshots/*.jpg
 
 # Python cache & virtual environment
 __pycache__/
 *.pyc
 venv/
 .venv/
-plant_env/
-

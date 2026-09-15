@@ -9,11 +9,11 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
-from config import DATABASE_PATH
+from config import SQLITE_DB_PATH
 from utils.logger import logger
 
 # Default database location
-DEFAULT_DB_PATH = DATABASE_PATH
+DEFAULT_DB_PATH = SQLITE_DB_PATH
 
 
 def get_utc_now_iso() -> str:
@@ -117,20 +117,6 @@ def init_database(db_path: Optional[str] = None) -> None:
                 sent_status INTEGER DEFAULT 1
             );
         """)
-
-        # 5. disease_detections table (Agro Eye YOLOv8 Disease Detections)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS disease_detections (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                disease_name TEXT NOT NULL,
-                confidence REAL NOT NULL,
-                snapshot_path TEXT NOT NULL,
-                camera_id TEXT NOT NULL,
-                status TEXT NOT NULL,
-                synced_to_firebase INTEGER DEFAULT 0
-            );
-        """)
         
         # Indexes for fast querying & time-series operations
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sensor_timestamp ON sensor_readings(timestamp DESC);")
@@ -140,9 +126,6 @@ def init_database(db_path: Optional[str] = None) -> None:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_model ON detections(model_name);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_source ON detections(source);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_detections_synced ON detections(synced);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_disease_detections_timestamp ON disease_detections(timestamp DESC);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_disease_detections_disease ON disease_detections(disease_name);")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_disease_detections_synced ON disease_detections(synced_to_firebase);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON system_events(timestamp DESC);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_severity ON system_events(severity);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON system_events(event_type);")
@@ -539,52 +522,3 @@ def check_database_health(db_path: Optional[str] = None) -> bool:
         return True
     except Exception:
         return False
-
-
-def insert_disease_detection(
-    timestamp: str,
-    disease_name: str,
-    confidence: float,
-    snapshot_path: str,
-    camera_id: str = "usb_camera_0",
-    status: str = "confirmed",
-    synced_to_firebase: int = 0,
-    db_path: Optional[str] = None
-) -> int:
-    """
-    Inserts a confirmed disease detection record into the disease_detections table.
-    Uses parameterized queries to ensure database integrity.
-    """
-    conn = get_db_connection(db_path)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO disease_detections (
-                timestamp, disease_name, confidence, snapshot_path, camera_id, status, synced_to_firebase
-            ) VALUES (?, ?, ?, ?, ?, ?, ?);
-        """, (
-            str(timestamp),
-            str(disease_name),
-            float(confidence),
-            str(snapshot_path),
-            str(camera_id),
-            str(status),
-            int(synced_to_firebase)
-        ))
-        conn.commit()
-        return cursor.lastrowid
-    finally:
-        conn.close()
-
-
-def get_recent_disease_detections(limit: int = 20, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Retrieve recent disease detections from disease_detections table."""
-    conn = get_db_connection(db_path)
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM disease_detections ORDER BY id DESC LIMIT ?", (limit,))
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
-    finally:
-        conn.close()
-

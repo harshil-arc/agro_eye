@@ -3,16 +3,11 @@ from pathlib import Path
 
 # Base Paths
 BASE_DIR = Path(__file__).resolve().parent.parent
-MODELS_DIR = BASE_DIR / "models"
-SNAPSHOT_DIR = BASE_DIR / "snapshots"
-DATABASE_DIR = BASE_DIR / "database"
-LOGS_DIR = BASE_DIR / "logs"
+DATA_DIR = BASE_DIR / "data"
+SNAPSHOT_DIR = DATA_DIR / "snapshots"
 
-# Ensure required runtime directories exist
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
-DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(exist_ok=True)
+SNAPSHOT_DIR.mkdir(exist_ok=True)
 
 # Load environment variables from .env file if present
 ENV_PATH = BASE_DIR / ".env"
@@ -20,6 +15,7 @@ try:
     from dotenv import load_dotenv
     load_dotenv(dotenv_path=ENV_PATH)
 except ImportError:
+    # Fallback basic manual parser if python-dotenv is not installed yet
     if ENV_PATH.exists():
         with open(ENV_PATH, "r", encoding="utf-8") as f:
             for line in f:
@@ -29,56 +25,54 @@ except ImportError:
                     os.environ.setdefault(k.strip(), v.strip())
 
 # ============================================================
-# 1. YOLOv8 TRAINED MODEL CONFIGURATION
-# ============================================================
-MODEL_PATH = os.environ.get("MODEL_PATH", str(MODELS_DIR / "disease_model.pt"))
-CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.55"))
-IOU_THRESHOLD = float(os.environ.get("IOU_THRESHOLD", "0.45"))
-IMAGE_SIZE = int(os.environ.get("IMAGE_SIZE", "640"))
-
-# ============================================================
-# 2. CAMERA CONFIGURATION (USB Webcam)
-# ============================================================
-CAMERA_INDEX = int(os.environ.get("CAMERA_INDEX", "0"))
-FRAME_WIDTH = int(os.environ.get("FRAME_WIDTH", "640"))
-FRAME_HEIGHT = int(os.environ.get("FRAME_HEIGHT", "480"))
-FPS = int(os.environ.get("FPS", "20"))
-CAMERA_ID = os.environ.get("CAMERA_ID", "usb_camera_0")
-CAMERA_RETRY_INTERVAL = float(os.environ.get("CAMERA_RETRY_INTERVAL", "2.0"))
-
-# ============================================================
-# 3. TEMPORAL CONFIRMATION LOGIC
-# ============================================================
-# Detections of the same disease required within the window to confirm
-CONFIRMATION_FRAMES = int(os.environ.get("CONFIRMATION_FRAMES", "5"))
-CONFIRMATION_WINDOW_SECONDS = float(os.environ.get("CONFIRMATION_WINDOW_SECONDS", "3.0"))
-
-# ============================================================
-# 4. SNAPSHOT & COOLDOWN SETTINGS
-# ============================================================
-SNAPSHOT_DIRECTORY = os.environ.get("SNAPSHOT_DIRECTORY", str(SNAPSHOT_DIR))
-# Minimum seconds between snapshots of the same confirmed disease
-SNAPSHOT_COOLDOWN_SECONDS = float(os.environ.get("SNAPSHOT_COOLDOWN_SECONDS", "60.0"))
-
-# ============================================================
-# 5. SQLITE DATABASE CONFIGURATION
-# ============================================================
-DATABASE_PATH = os.environ.get("DATABASE_PATH", str(DATABASE_DIR / "farm_system.db"))
-
-# ============================================================
-# 6. LOGGING CONFIGURATION
-# ============================================================
-LOG_DIRECTORY = os.environ.get("LOG_DIRECTORY", str(LOGS_DIR))
-LOG_FILE = os.environ.get("LOG_FILE", str(LOGS_DIR / "agro_eye.log"))
-
-# ============================================================
-# 7. GUI & DISPLAY CONFIGURATION
+# SYSTEM & HARDWARE OPERATION MODE
 # ============================================================
 ENABLE_GUI_DISPLAY = os.environ.get("ENABLE_GUI_DISPLAY", "True").lower() in ("true", "1", "yes")
-WINDOW_NAME = "AGRO EYE - Plant Disease Detection"
 
 # ============================================================
-# 8. FIREBASE & CLOUD CONFIGURATION (Future Cloud Sync)
+# CAMERA & AI INFERENCE CONFIGURATION
+# ============================================================
+CAMERA_INDICES = [0, 1, 2]
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+ROI_SIZE = 360
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+GEMINI_AI_INTERVAL = float(os.environ.get("GEMINI_INTERVAL", "0.8"))
+
+MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "detecting-diseases/5")
+API_KEY = os.environ.get("ROBOFLOW_API_KEY", "")
+ROBOFLOW_API_URL = os.environ.get("ROBOFLOW_API_URL", "https://detect.roboflow.com")
+CONFIDENCE_THRESHOLD = 0.25
+INFERENCE_INTERVAL = 0.5  # In seconds (throttle API rate)
+
+
+
+# ============================================================
+# SENSOR POLLING & THRESHOLDS
+# ============================================================
+SENSOR_POLL_INTERVAL = 5.0  # seconds between sensor readings
+
+# ESP32 / Arduino Serial Sensor Receiver (JSON / Text stream over Serial)
+ESP32_SERIAL_PORT = os.environ.get("ESP32_PORT", "/dev/ttyUSB0")
+ESP32_BAUDRATE = int(os.environ.get("ESP32_BAUDRATE", "9600"))
+
+# Thresholds for Alerts
+TEMP_HIGH_THRESHOLD = 38.0     # °C
+TEMP_LOW_THRESHOLD = 10.0      # °C
+HUMIDITY_HIGH_THRESHOLD = 90.0   # %
+SOIL_DRY_THRESHOLD = 30.0      # % (Alert if moisture < 30%)
+SOIL_WET_THRESHOLD = 85.0      # % (Alert if moisture > 85%)
+MQ135_ALERT_THRESHOLD = 600    # Raw ADC count for poor air quality / gas leak
+
+# Direct Hardware Pins (if used directly on Pi instead of ESP32)
+DHT_PIN = int(os.environ.get("DHT_PIN", "4"))
+DHT_TYPE = os.environ.get("DHT_TYPE", "DHT22")
+SOIL_MOISTURE_CHANNEL = int(os.environ.get("SOIL_CHANNEL", "0"))
+
+# ============================================================
+# FIREBASE CONFIGURATION
 # ============================================================
 FIREBASE_CREDENTIALS_PATH = os.environ.get(
     "FIREBASE_CREDENTIALS", 
@@ -94,7 +88,7 @@ FIREBASE_STORAGE_BUCKET = os.environ.get(
 )
 
 # ============================================================
-# 9. LORA MODULE CONFIGURATION (Future LoRa Alert Broadcast)
+# LORA MODULE CONFIGURATION (Raspberry Pi 5 loralibPi5)
 # ============================================================
 LORA_FREQUENCY = int(os.environ.get("LORA_FREQ", "433000000"))  # 433 MHz
 LORA_SPREADING_FACTOR = int(os.environ.get("LORA_SF", "7"))
@@ -105,21 +99,7 @@ LORA_TX_POWER = int(os.environ.get("LORA_POWER", "17"))         # 17 dBm (PA_BOO
 LORA_ALERT_COOLDOWN = 2.5  # seconds between repeated packet broadcasts
 
 # ============================================================
-# 10. SENSORS & SERIAL TELEMETRY (Hardware Bridge)
+# LOCAL DATABASE CONFIGURATION
 # ============================================================
-SENSOR_POLL_INTERVAL = 5.0
-ESP32_SERIAL_PORT = os.environ.get("ESP32_PORT", "/dev/ttyUSB0")
-ESP32_BAUDRATE = int(os.environ.get("ESP32_BAUDRATE", "9600"))
-SQLITE_DB_PATH = DATABASE_PATH
-SYNC_INTERVAL = 10.0
-
-# Sensor Alert Thresholds
-TEMP_HIGH_THRESHOLD = float(os.environ.get("TEMP_HIGH_THRESHOLD", "38.0"))
-TEMP_LOW_THRESHOLD = float(os.environ.get("TEMP_LOW_THRESHOLD", "10.0"))
-HUMIDITY_HIGH_THRESHOLD = float(os.environ.get("HUMIDITY_HIGH_THRESHOLD", "90.0"))
-SOIL_DRY_THRESHOLD = float(os.environ.get("SOIL_DRY_THRESHOLD", "30.0"))
-SOIL_WET_THRESHOLD = float(os.environ.get("SOIL_WET_THRESHOLD", "85.0"))
-MQ135_ALERT_THRESHOLD = int(os.environ.get("MQ135_ALERT_THRESHOLD", "600"))
-
-
-
+SQLITE_DB_PATH = str(DATA_DIR / "plant_system.db")
+SYNC_INTERVAL = 10.0  # seconds to retry flushing offline buffer to Firebase
