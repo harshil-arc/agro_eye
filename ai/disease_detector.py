@@ -1,8 +1,6 @@
 import os
 import sys
 import time
-import json
-import re
 import warnings
 import threading
 from datetime import datetime
@@ -14,403 +12,487 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 import cv2
 import numpy as np
-from PIL import Image
 
-# Google GenAI SDK imports
-GENAI_SDK_TYPE = None
-try:
-    from google import genai
-    GENAI_SDK_TYPE = "google.genai"
-except ImportError:
-    try:
-        import google.generativeai as genai_legacy
-        GENAI_SDK_TYPE = "google.generativeai"
-    except ImportError:
-        GENAI_SDK_TYPE = None
-
+# Ultralytics YOLO import (100% offline)
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-except ImportError:
+except Exception:
     YOLO_AVAILABLE = False
 
 from utils.logger import logger
 
-DEFAULT_GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-
-
-
-class FastFoliageTracker:
-    """Ultra-fast (5ms) computer vision leaf & plant contour locator for instant 0ms bounding boxes."""
-    def __init__(self):
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-
-    def extract_leaf_boxes(self, frame: np.ndarray) -> List[dict]:
-        """Detects active plant foliage / leaf regions instantly from frame color and salience."""
-        h, w = frame.shape[:2]
-        scale = 320.0 / max(w, h)
-        sw, sh = int(w * scale), int(h * scale)
-        small = cv2.resize(frame, (sw, sh), interpolation=cv2.INTER_LINEAR)
-
-        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-
-        # Green foliage spectrum + yellow/brown lesion spectrum
-        mask_green = cv2.inRange(hsv, (24, 25, 25), (95, 255, 255))
-        mask_lesion = cv2.inRange(hsv, (8, 35, 35), (24, 255, 255))
-        mask = cv2.bitwise_or(mask_green, mask_lesion)
-
-        mask_clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel)
-        mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_CLOSE, self.kernel)
-
-        contours, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        boxes = []
-        inv_scale = 1.0 / scale
-
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > 450:
-                bx, by, bw, bh = cv2.boundingRect(cnt)
-                fx = int(bx * inv_scale)
-                fy = int(by * inv_scale)
-                fw = int(bw * inv_scale)
-                fh = int(bh * inv_scale)
-
-                boxes.append({
-                    "x": max(0, fx),
-                    "y": max(0, fy),
-                    "w": min(w - fx, fw),
-                    "h": min(h - fy, fh),
-                    "conf": 0.88,
-                    "label": "Active Leaf ROI",
-                    "is_diseased": False,
-                    "source": "Instant Tracker"
-                })
-
-        return sorted(boxes, key=lambda b: b["w"] * b["h"], reverse=True)[:3]
-
-
-class GeminiPlantPathologist:
-    """Asynchronous background engine analyzing live frames & generating 2D spatial bounding boxes."""
-
-    ANALYSIS_PROMPT = """Expert Agricultural Plant Pathologist & Computer Vision AI.
-Diagnose plant health, disease, and locate bounding boxes for any leaf, plant, or crop in frame.
-
-Return raw JSON only:
-{
-  "plant_detected": true or false,
-  "plant_name": "Plant species name or Unknown",
-  "health_status": "Healthy" | "Diseased" | "Pest Infested" | "Nutrient Deficient" | "No Plant Detected",
-  "disease_name": "Specific Disease or Pest Name or None",
-  "pathogen_type": "Fungal" | "Bacterial" | "Viral" | "Pest/Insect" | "Nutritional" | "None",
-  "severity": "None" | "Low" | "Moderate" | "Severe",
-  "confidence": 0 to 100,
-  "symptoms": "Description of visible symptoms or None",
-  "organic_remedy": "Organic/biological treatment or None",
-  "chemical_remedy": "Chemical fungicide/pesticide or None",
-  "bounding_boxes": [
-    {
-      "box_2d": [ymin, xmin, ymax, xmax],
-      "label": "Specific Disease or Leaf Name",
-      "is_diseased": true or false
+# =====================================================================
+# EXACT 17-CLASS AGRONOMIC PATHOLOGY KNOWLEDGE BASE
+# =====================================================================
+AGRONOMIC_KNOWLEDGE_BASE = {
+    "apple_scab_leaf": {
+        "crop": "Apple (Malus domestica)",
+        "disease": "Apple Scab",
+        "pathogen": "Fungal (Venturia inaequalis)",
+        "symptoms": "Olive-green to dark brown velvety circular spots on leaf surfaces.",
+        "organic_remedy": "Apply liquid copper fungicide or sulfur spray before rain; rake & destroy fallen leaves.",
+        "chemical_remedy": "Captan 50% WP (2.5g/L), Mancozeb 75% WP, or Difenoconazole 25% EC."
+    },
+    "apple_rust_leaf": {
+        "crop": "Apple (Malus domestica)",
+        "disease": "Cedar Apple Rust",
+        "pathogen": "Fungal (Gymnosporangium juniperi-virginianae)",
+        "symptoms": "Bright yellow-orange or rust-colored circular spots on upper leaf surfaces.",
+        "organic_remedy": "Apply sulfur or neem oil sprays at pink bud stage; remove nearby red cedar trees.",
+        "chemical_remedy": "Myclobutanil (Rally 40WSP), Propiconazole, or Mancozeb sprays."
+    },
+    "bell_pepper_leaf_spot": {
+        "crop": "Bell Pepper (Capsicum annuum)",
+        "disease": "Bacterial Leaf Spot",
+        "pathogen": "Bacterial (Xanthomonas campestris)",
+        "symptoms": "Small, water-soaked, blistering dark lesions with yellow halos on leaves.",
+        "organic_remedy": "Copper soap or Bacillus subtilis foliar spray; avoid overhead sprinkling.",
+        "chemical_remedy": "Copper Oxychloride 50% WP (3g/L) mixed with Streptocycline (0.5g/L)."
+    },
+    "corn_gray_leaf_spot": {
+        "crop": "Corn / Maize (Zea mays)",
+        "disease": "Gray Leaf Spot",
+        "pathogen": "Fungal (Cercospora zeae-maydis)",
+        "symptoms": "Narrow rectangular, tan-to-gray lesions running parallel to leaf veins.",
+        "organic_remedy": "Crop rotation with non-host crops, deep tillage of crop residues, resistant hybrids.",
+        "chemical_remedy": "Azoxystrobin + Difenoconazole (Amistar Top) or Pyraclostrobin."
+    },
+    "corn_leaf_blight": {
+        "crop": "Corn / Maize (Zea mays)",
+        "disease": "Northern Leaf Blight",
+        "pathogen": "Fungal (Exserohilum turcicum)",
+        "symptoms": "Long, elliptical cigar-shaped grayish-green to tan lesions on leaves.",
+        "organic_remedy": "Trichoderma bio-fungicide seed treatment; remove infected debris after harvest.",
+        "chemical_remedy": "Mancozeb 75% WP (2.5g/L) or Propiconazole 25% EC (1ml/L)."
+    },
+    "corn_rust_leaf": {
+        "crop": "Corn / Maize (Zea mays)",
+        "disease": "Common Corn Rust",
+        "pathogen": "Fungal (Puccinia sorghi)",
+        "symptoms": "Golden-brown to cinnamon-brown powdery pustules scattered on both leaf surfaces.",
+        "organic_remedy": "Sulfur dusting, plant early to avoid peak spore dispersal, plant resistant cultivars.",
+        "chemical_remedy": "Tebuconazole 25.9% EC (1.5ml/L) or Azoxystrobin."
+    },
+    "potato_leaf_early_blight": {
+        "crop": "Potato (Solanum tuberosum)",
+        "disease": "Early Blight",
+        "pathogen": "Fungal (Alternaria solani)",
+        "symptoms": "Dark brown circular spots with distinctive concentric target rings on older foliage.",
+        "organic_remedy": "Neem oil 2%, copper hydroxide spray, prune lower diseased foliage.",
+        "chemical_remedy": "Chlorothalonil 75% WP (2g/L) or Mancozeb 75% WP."
+    },
+    "potato_leaf_late_blight": {
+        "crop": "Potato (Solanum tuberosum)",
+        "disease": "Late Blight",
+        "pathogen": "Oomycete (Phytophthora infestans)",
+        "symptoms": "Water-soaked irregular dark lesions surrounded by light yellow-green halo with white mold.",
+        "organic_remedy": "Fixed copper fungicides, eliminate cull piles, ensure good field drainage.",
+        "chemical_remedy": "Metalaxyl + Mancozeb (Ridomil MZ 2.5g/L) or Cymoxanil."
+    },
+    "squash_powdery_mildew_leaf": {
+        "crop": "Squash / Cucurbits (Cucurbita spp.)",
+        "disease": "Powdery Mildew",
+        "pathogen": "Fungal (Podosphaera xanthii)",
+        "symptoms": "Talcum powder-like white fungal coating on upper and lower leaf surfaces.",
+        "organic_remedy": "Potassium bicarbonate spray, horticultural neem oil 2%, diluted whey spray.",
+        "chemical_remedy": "Hexaconazole 5% EC (1ml/L) or Myclobutanil."
+    },
+    "tomato_early_blight_leaf": {
+        "crop": "Tomato (Solanum lycopersicum)",
+        "disease": "Early Blight",
+        "pathogen": "Fungal (Alternaria solani)",
+        "symptoms": "Brown-black concentric target rings on leaves, causing lower leaf yellowing and defoliation.",
+        "organic_remedy": "Copper soap fungicide, mulching around plants, drip irrigation only.",
+        "chemical_remedy": "Mancozeb 75% WP (2g/L) or Chlorothalonil."
+    },
+    "tomato_septoria_leaf_spot": {
+        "crop": "Tomato (Solanum lycopersicum)",
+        "disease": "Septoria Leaf Spot",
+        "pathogen": "Fungal (Septoria lycopersici)",
+        "symptoms": "Numerous small circular spots with dark brown margins and gray-tan centers.",
+        "organic_remedy": "Copper hydroxide spray, remove lower infected leaves, sanitize staking tools.",
+        "chemical_remedy": "Copper Oxychloride 50% WP (3g/L) or Chlorothalonil 75% WP."
+    },
+    "tomato_leaf_bacterial_spot": {
+        "crop": "Tomato (Solanum lycopersicum)",
+        "disease": "Bacterial Spot",
+        "pathogen": "Bacterial (Xanthomonas perforans)",
+        "symptoms": "Small, dark, water-soaked greasy spots that turn necrotic with translucent borders.",
+        "organic_remedy": "Liquid copper octanoate, avoid working with wet plants, crop rotation.",
+        "chemical_remedy": "Copper Hydroxide + Streptomycin sulfate (Plantomycin 0.5g/L)."
+    },
+    "tomato_leaf_late_blight": {
+        "crop": "Tomato (Solanum lycopersicum)",
+        "disease": "Late Blight",
+        "pathogen": "Oomycete (Phytophthora infestans)",
+        "symptoms": "Rapidly expanding irregular greasy gray-green water-soaked lesions on leaves and stems.",
+        "organic_remedy": "Copper-based fungicides, destroy severely diseased plants immediately.",
+        "chemical_remedy": "Metalaxyl 8% + Mancozeb 64% WP (Ridomil 2g/L) or Dimethomorph."
+    },
+    "tomato_leaf_mosaic_virus": {
+        "crop": "Tomato (Solanum lycopersicum)",
+        "disease": "Mosaic Virus (ToMV)",
+        "pathogen": "Viral (Tomato Mosaic Tobamovirus)",
+        "symptoms": "Mottled light and dark green mosaic patterns, leaf curling, blistering, and stunting.",
+        "organic_remedy": "Wash hands with skim milk/soap before handling; disinfect shears with 10% bleach.",
+        "chemical_remedy": "No direct virucide; control aphid & thrips vectors with insecticidal soap."
+    },
+    "tomato_leaf_yellow_virus": {
+        "crop": "Tomato (Solanum lycopersicum)",
+        "disease": "Yellow Leaf Curl (TYLCV)",
+        "pathogen": "Viral (Begomovirus transmitted by Whiteflies)",
+        "symptoms": "Upward curling and cupping of leaves with pronounced yellowing of leaf margins.",
+        "organic_remedy": "Install yellow sticky traps, spray neem oil 3%, use reflective silver mulches.",
+        "chemical_remedy": "Control whitefly vector: Imidacloprid 17.8% SL (0.5ml/L) or Acetamiprid 20% SP."
+    },
+    "tomato_mold_leaf": {
+        "crop": "Tomato (Solanum lycopersicum)",
+        "disease": "Leaf Mold",
+        "pathogen": "Fungal (Passalora fulva)",
+        "symptoms": "Pale yellow chlorotic spots on upper leaf surface with olive-brown velvety mold underneath.",
+        "organic_remedy": "Increase greenhouse ventilation, reduce relative humidity below 85%, copper spray.",
+        "chemical_remedy": "Chlorothalonil, Mancozeb, or Difenoconazole foliar application."
+    },
+    "grape_leaf_black_rot": {
+        "crop": "Grape (Vitis vinifera)",
+        "disease": "Black Rot",
+        "pathogen": "Fungal (Guignardia bidwellii)",
+        "symptoms": "Small reddish-brown circular spots with dark margins and tiny black spore dots (pycnidia).",
+        "organic_remedy": "Lime-sulfur dormant spray, liquid copper, prune diseased shoots and mummified berries.",
+        "chemical_remedy": "Mancozeb 75% WP (2.5g/L) or Myclobutanil (Rally) spray."
     }
-  ]
-}"""
+}
 
-    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-3.5-flash-lite", interval: float = 0.8):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or DEFAULT_GEMINI_API_KEY
-        self.model_name = model_name
-        self.interval = max(0.4, interval)
-        self.running = False
-        self.paused = False
-        self.trigger_instant_scan = False
 
-        self.latest_result: Dict[str, Any] = {
-            "plant_detected": False,
-            "plant_name": "Scanning for plants...",
-            "health_status": "Scanning",
-            "disease_name": "None",
-            "pathogen_type": "None",
-            "severity": "None",
-            "confidence": 0,
-            "symptoms": "Point camera at plant/leaf to diagnose...",
-            "organic_remedy": "None",
-            "chemical_remedy": "None",
-            "bounding_boxes": [],
-            "last_updated": datetime.now().strftime("%H:%M:%S"),
-            "latency_ms": 0,
-            "status": "INITIALIZING"
+def lookup_agronomic_info(raw_class_name: str, confidence: float = 0.0) -> Dict[str, Any]:
+    """Resolves raw YOLO class name to detailed agronomic metadata and remedies."""
+    norm = raw_class_name.lower().strip().replace("-", "_").replace(" ", "_").replace("___", "_").replace("__", "_")
+
+    matched_key = None
+    for key in AGRONOMIC_KNOWLEDGE_BASE:
+        if key == norm or key in norm or norm in key:
+            matched_key = key
+            break
+
+    if not matched_key:
+        for key in AGRONOMIC_KNOWLEDGE_BASE:
+            parts = key.split("_")
+            if sum(1 for p in parts if p in norm) >= 2:
+                matched_key = key
+                break
+
+    if matched_key:
+        info = AGRONOMIC_KNOWLEDGE_BASE[matched_key].copy()
+    else:
+        clean_title = raw_class_name.replace("_", " ").title()
+        info = {
+            "crop": "Crop / Plant",
+            "disease": clean_title,
+            "pathogen": "Pathogenic Agent",
+            "symptoms": f"Visible leaf lesion / symptom detected ({clean_title}).",
+            "organic_remedy": "Apply 2% cold-pressed neem oil spray, isolate infected leaves, avoid wetting foliage.",
+            "chemical_remedy": "Broad-spectrum fungicide: Copper Oxychloride 50% WP or Mancozeb 75% WP."
         }
 
-        self.current_frame: Optional[np.ndarray] = None
-        self.lock = threading.Lock()
-        self.client = None
-        self.legacy_model = None
-        self._init_gemini()
+    info["is_diseased"] = True
+    info["clean_name"] = info.get("disease", raw_class_name.replace("_", " ").title())
 
-    def _init_gemini(self):
-        if GENAI_SDK_TYPE == "google.genai":
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-                logger.info(f"Initialized Google GenAI Client with model: '{self.model_name}'")
-            except Exception as e:
-                logger.warning(f"Failed to initialize google.genai Client: {e}")
-        elif GENAI_SDK_TYPE == "google.generativeai":
-            try:
-                genai_legacy.configure(api_key=self.api_key)
-                self.legacy_model = genai_legacy.GenerativeModel(self.model_name)
-                logger.info(f"Initialized Google GenerativeAI model: '{self.model_name}'")
-            except Exception as e:
-                logger.warning(f"Failed to initialize google.generativeai: {e}")
-        else:
-            logger.warning("No Google GenAI SDK available in Python environment.")
+    # Genuine confidence percentage from YOLO model
+    calibrated_pct = max(1, min(99, int(round(confidence * 100))))
+    info["display_confidence"] = calibrated_pct
 
-    def update_frame(self, frame: np.ndarray):
-        with self.lock:
-            self.current_frame = frame
+    if calibrated_pct >= 65:
+        info["severity"] = "High / Acute"
+    elif calibrated_pct >= 35:
+        info["severity"] = "Moderate"
+    else:
+        info["severity"] = "Early Stage / Low"
 
-    def request_instant_scan(self):
-        self.trigger_instant_scan = True
-
-    def get_latest_result(self) -> Dict[str, Any]:
-        with self.lock:
-            return self.latest_result.copy()
-
-    def start(self):
-        self.running = True
-        thread = threading.Thread(target=self._worker_loop, daemon=True)
-        thread.start()
-        return self
-
-    def stop(self):
-        self.running = False
-
-    def _worker_loop(self):
-        """Continuous asynchronous loop sending frame samples to Gemini."""
-        candidate_models = [self.model_name, "gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-flash-latest"]
-
-        while self.running:
-            if self.paused:
-                time.sleep(0.1)
-                continue
-
-            frame_to_process = None
-            with self.lock:
-                if self.current_frame is not None:
-                    frame_to_process = self.current_frame.copy()
-
-            if frame_to_process is None:
-                time.sleep(0.05)
-                continue
-
-            h, w = frame_to_process.shape[:2]
-            target_w = 480
-            target_h = int(h * (target_w / w))
-            resized = cv2.resize(frame_to_process, (target_w, target_h), interpolation=cv2.INTER_AREA)
-            rgb_frame = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(rgb_frame)
-
-            t0 = time.time()
-            success = False
-
-            for model_cand in candidate_models:
-                try:
-                    raw_text = None
-                    if self.client is not None:
-                        res = self.client.models.generate_content(
-                            model=model_cand,
-                            contents=[pil_image, self.ANALYSIS_PROMPT],
-                            config={"temperature": 0.1, "max_output_tokens": 350}
-                        )
-                        raw_text = res.text
-                    elif self.legacy_model is not None:
-                        model_obj = genai_legacy.GenerativeModel(model_cand)
-                        res = model_obj.generate_content(
-                            [pil_image, self.ANALYSIS_PROMPT],
-                            generation_config={"temperature": 0.1, "max_output_tokens": 350}
-                        )
-                        raw_text = res.text
-
-                    if raw_text:
-                        latency_ms = int((time.time() - t0) * 1000)
-                        clean_json = re.sub(r"^```(?:json)?\s*", "", raw_text.strip(), flags=re.IGNORECASE)
-                        clean_json = re.sub(r"\s*```$", "", clean_json)
-                        parsed = json.loads(clean_json)
-
-                        parsed["last_updated"] = datetime.now().strftime("%H:%M:%S")
-                        parsed["latency_ms"] = latency_ms
-                        parsed["status"] = "OK"
-                        parsed["active_model"] = model_cand
-
-                        if "bounding_boxes" not in parsed or not isinstance(parsed["bounding_boxes"], list):
-                            parsed["bounding_boxes"] = []
-
-                        with self.lock:
-                            self.latest_result = parsed
-                        success = True
-                        self.model_name = model_cand
-
-                        plant_st = parsed.get("health_status", "N/A")
-                        plant_nm = parsed.get("plant_name", "Unknown")
-                        dis_nm = parsed.get("disease_name", "None")
-                        bboxes = parsed.get("bounding_boxes", [])
-                        logger.info(f"Gemini AI -> {plant_nm} ({plant_st}) | Disease: {dis_nm} | BBoxes: {len(bboxes)} | {latency_ms}ms")
-                        break
-                except Exception:
-                    continue
-
-            if not success:
-                with self.lock:
-                    self.latest_result["status"] = "Retrying AI connection..."
-                    self.latest_result["latency_ms"] = int((time.time() - t0) * 1000)
-
-            for _ in range(int(self.interval * 10)):
-                if not self.running or self.trigger_instant_scan:
-                    self.trigger_instant_scan = False
-                    break
-                time.sleep(0.05)
+    return info
 
 
 class LocalPlantDetector:
-    """High-speed local detector for real-time 60 FPS plant disease bounding boxes."""
-    def __init__(self, conf_thresh: float = 0.25):
+    """Multi-Scale 100% Offline YOLOv8 Plant Disease Inference Engine."""
+    def __init__(self, model_path: Optional[str] = None, conf_thresh: float = 0.15):
         self.conf_thresh = conf_thresh
+        self.model_path = model_path
         self.plant_model = None
         self.lock = threading.Lock()
+        self.model_loaded = False
+        self.loaded_path = ""
+        self.num_classes = 0
 
         if YOLO_AVAILABLE:
-            threading.Thread(target=self._load_model_background, daemon=True).start()
+            self._load_model()
 
-    def _load_model_background(self):
-        plant_candidates = ["models/plant_disease_best.pt", "runs/detect/train/weights/best.pt", "models/best.pt"]
-        for p in plant_candidates:
-            if Path(p).exists():
+    def _load_model(self):
+        base_dir = Path(__file__).resolve().parent.parent
+        candidates = []
+        if self.model_path:
+            candidates.append(self.model_path)
+        candidates.extend([
+            "models/disease_model.pt",
+            "models/plant_disease_best.pt",
+            "runs/detect/train/weights/best.pt",
+            "models/best.pt",
+            "disease_model.pt"
+        ])
+
+        for p in candidates:
+            candidate_path = Path(p) if Path(p).is_absolute() else (base_dir / p)
+            if candidate_path.exists():
                 try:
-                    loaded_p = YOLO(p)
+                    loaded_p = YOLO(str(candidate_path))
                     with self.lock:
                         self.plant_model = loaded_p
-                    logger.info(f"Local Plant Disease YOLO loaded: {p} ({len(loaded_p.names)} classes)")
-                    break
+                        self.model_loaded = True
+                        self.loaded_path = str(candidate_path)
+                        self.num_classes = len(loaded_p.names) if hasattr(loaded_p, "names") else 0
+                    logger.info(f"Offline YOLOv8 Plant Disease Model loaded: {candidate_path} ({self.num_classes} classes)")
+                    return
                 except Exception as e:
-                    logger.warning(f"Error loading plant model {p}: {e}")
+                    logger.warning(f"Error initializing YOLO model at {candidate_path}: {e}")
 
-    def detect(self, frame: np.ndarray) -> List[dict]:
+        logger.warning("No local .pt model found in models/disease_model.pt.")
+
+    @staticmethod
+    def _is_plant_foliage(crop: np.ndarray) -> bool:
+        """
+        Botanical foliage verification gate:
+        1. Explicitly rejects human skin tones (YCrCb color space).
+        2. Measures Excess Green Index (ExG = 2G - R - B) to ensure chlorophyll reflection.
+        3. Checks leaf green, chlorotic yellow, and necrotic lesion HSV spectrum.
+        """
+        if crop is None or crop.size == 0 or crop.shape[0] < 20 or crop.shape[1] < 20:
+            return False
+
+        h, w = crop.shape[:2]
+        total_pixels = float(h * w)
+
+        # 1. Human Skin Tone Rejection in YCrCb: Cr in [133, 173], Cb in [77, 127]
+        ycrcb = cv2.cvtColor(crop, cv2.COLOR_BGR2YCrCb)
+        skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
+        skin_ratio = np.count_nonzero(skin_mask) / total_pixels
+
+        # 2. Excess Green Botanical Index: ExG = 2*G - R - B
+        b, g, r = cv2.split(crop.astype(np.float32))
+        exg = 2 * g - r - b
+
+        # 3. True Plant Chlorophyll Spectrum in HSV
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        # Leaf green foliage: Hue 30 to 90, Sat >= 35, Val >= 35
+        green_mask = cv2.inRange(hsv, np.array([30, 35, 35]), np.array([90, 255, 255]))
+        # Chlorotic / yellow diseased leaf: Hue 20 to 30, Sat >= 50, Val >= 45
+        yellow_mask = cv2.inRange(hsv, np.array([20, 50, 45]), np.array([30, 255, 255]))
+        # Necrotic brown leaf lesion: Hue 10 to 20, Sat >= 40, Val in [30, 200]
+        brown_mask = cv2.inRange(hsv, np.array([10, 40, 30]), np.array([20, 255, 200]))
+
+        plant_mask = (exg > 5) & ((green_mask > 0) | (yellow_mask > 0) | (brown_mask > 0))
+        foliage_ratio = np.count_nonzero(plant_mask) / total_pixels
+
+        # If human skin is dominant or foliage ratio is insufficient, reject
+        if skin_ratio > 0.18 and skin_ratio >= foliage_ratio:
+            return False
+        if foliage_ratio < 0.15:
+            return False
+
+        return True
+
+    def detect_multiscale(self, frame: np.ndarray) -> Tuple[List[dict], Tuple[int, int, int, int]]:
+        """
+        Runs dual-scale inference with Foliage Verification Gate:
+          1. High-resolution Center Target Zone (where user holds leaf)
+          2. Full frame (for broader coverage)
+        Returns:
+          (detected_boxes, target_roi_coordinates)
+        """
+        h, w = frame.shape[:2]
         plant_boxes = []
+
+        # Calculate Center Target ROI (65% of screen centered)
+        cx, cy = w // 2, h // 2
+        size_w = int(w * 0.70)
+        size_h = int(h * 0.70)
+        rx1 = max(0, cx - size_w // 2)
+        ry1 = max(0, cy - size_h // 2)
+        rx2 = min(w, cx + size_w // 2)
+        ry2 = min(h, cy + size_h // 2)
+        target_roi = (rx1, ry1, rx2, ry2)
 
         with self.lock:
             p_model = self.plant_model
 
-        if p_model is not None:
+        if p_model is None or frame is None or frame.size == 0 or np.std(frame) < 14.0:
+            return plant_boxes, target_roi
+
+        # 1. Scale 1: Scan Center Target ROI at high resolution
+        roi_img = frame[ry1:ry2, rx1:rx2]
+        if roi_img.size > 0 and self._is_plant_foliage(roi_img):
             try:
-                results = p_model(frame, verbose=False, conf=self.conf_thresh, imgsz=416)
-                if results and len(results) > 0:
-                    for box in results[0].boxes:
+                results_roi = p_model(roi_img, verbose=False, conf=self.conf_thresh, imgsz=640)
+                if results_roi and len(results_roi) > 0:
+                    for box in results_roi[0].boxes:
                         cls_id = int(box.cls[0].item())
-                        name = results[0].names.get(cls_id, "")
+                        name = results_roi[0].names.get(cls_id, f"Class_{cls_id}")
                         conf = float(box.conf[0].item())
-                        xyxy = box.xyxy[0].cpu().numpy()
-                        x1, y1, x2, y2 = map(int, xyxy)
-                        w, h = x2 - x1, y2 - y1
+                        bx1, by1, bx2, by2 = map(int, box.xyxy[0].cpu().numpy())
+                        
+                        # Map ROI local coordinates to Full Frame coordinates
+                        fx1 = max(0, rx1 + bx1)
+                        fy1 = max(0, ry1 + by1)
+                        fw = min(w - fx1, bx2 - bx1)
+                        fh = min(h - fy1, by2 - by1)
 
-                        is_healthy = "healthy" in name.lower()
-                        clean_name = name.replace("_", " ")
-
-                        plant_boxes.append({
-                            "x": x1, "y": y1, "w": w, "h": h,
-                            "conf": conf, "label": clean_name,
-                            "is_diseased": not is_healthy,
-                            "source": "Local YOLO"
-                        })
+                        if fw > 16 and fh > 16:
+                            box_crop = frame[fy1:fy1+fh, fx1:fx1+fw]
+                            # Foliage verification gate on individual bounding box
+                            if self._is_plant_foliage(box_crop):
+                                info = lookup_agronomic_info(name, conf)
+                                plant_boxes.append({
+                                    "x": fx1, "y": fy1, "w": fw, "h": fh,
+                                    "conf": conf,
+                                    "display_conf": info["display_confidence"],
+                                    "label": info["clean_name"],
+                                    "raw_label": name,
+                                    "crop": info["crop"],
+                                    "is_diseased": True,
+                                    "source": "Center Scanner"
+                                })
             except Exception:
                 pass
 
-        return plant_boxes
+        # 2. Scale 2: If no box found in Center ROI and frame has foliage, scan full frame
+        if len(plant_boxes) == 0 and self._is_plant_foliage(frame):
+            try:
+                results_full = p_model(frame, verbose=False, conf=self.conf_thresh, imgsz=640)
+                if results_full and len(results_full) > 0:
+                    for box in results_full[0].boxes:
+                        cls_id = int(box.cls[0].item())
+                        name = results_full[0].names.get(cls_id, f"Class_{cls_id}")
+                        conf = float(box.conf[0].item())
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                        w_box = max(4, x2 - x1)
+                        h_box = max(4, y2 - y1)
+
+                        if w_box > 16 and h_box > 16:
+                            box_crop = frame[y1:y1+h_box, x1:x1+w_box]
+                            if self._is_plant_foliage(box_crop):
+                                info = lookup_agronomic_info(name, conf)
+                                plant_boxes.append({
+                                    "x": x1, "y": y1, "w": w_box, "h": h_box,
+                                    "conf": conf,
+                                    "display_conf": info["display_confidence"],
+                                    "label": info["clean_name"],
+                                    "raw_label": name,
+                                    "crop": info["crop"],
+                                    "is_diseased": True,
+                                    "source": "Full Frame"
+                                })
+            except Exception:
+                pass
+
+        # Non-Maximum Suppression: filter out overlapping boxes and keep top detections
+        if len(plant_boxes) > 1:
+            plant_boxes = sorted(plant_boxes, key=lambda b: b["conf"], reverse=True)
+            clean_boxes = []
+            for b in plant_boxes:
+                keep = True
+                bx1, by1, bx2, by2 = b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]
+                for cb in clean_boxes:
+                    cx1, cy1, cx2, cy2 = cb["x"], cb["y"], cb["x"] + cb["w"], cb["y"] + cb["h"]
+                    ix1, iy1 = max(bx1, cx1), max(by1, cy1)
+                    ix2, iy2 = min(bx2, cx2), min(by2, cy2)
+                    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+                    inter_area = iw * ih
+                    union_area = (b["w"] * b["h"]) + (cb["w"] * cb["h"]) - inter_area
+                    iou = inter_area / union_area if union_area > 0 else 0
+                    if iou > 0.35:
+                        keep = False
+                        break
+                if keep:
+                    clean_boxes.append(b)
+            plant_boxes = clean_boxes[:2]
+
+        return plant_boxes, target_roi
 
 
 class PlantPathologyHUD:
-    """Renders cyber-agronomic heads-up display on live camera frames."""
+    """Renders unified dual-model real-time HUD overlays (Plant Pathology + Wildlife Intrusion)."""
 
     @staticmethod
-    def draw(frame: np.ndarray,
-             fps: float,
-             gemini_data: Dict[str, Any],
-             local_yolo_boxes: List[dict],
-             instant_leaf_boxes: List[dict],
-             hud_expanded: bool = True,
-             conf_thresh: float = 0.25,
-             sensor_overlay_text: Optional[str] = None) -> np.ndarray:
+    def draw(
+        frame: np.ndarray,
+        fps: float,
+        latency_ms: int,
+        conf_thresh: float,
+        detection_data: Dict[str, Any],
+        local_yolo_boxes: List[dict],
+        target_roi: Tuple[int, int, int, int],
+        animal_boxes: Optional[List[dict]] = None,
+        animal_result: Optional[Any] = None,
+        animal_thresh: float = 0.35,
+        hud_expanded: bool = True,
+        sensor_overlay_text: Optional[str] = None
+    ) -> np.ndarray:
         h, w = frame.shape[:2]
         canvas = frame.copy()
+        animal_boxes = animal_boxes or []
 
-        final_boxes = []
-        gemini_bboxes = gemini_data.get("bounding_boxes", [])
-        dis_name_global = gemini_data.get("disease_name", "Diseased Foliage")
-        plant_name_global = gemini_data.get("plant_name", "Plant")
-        health_global = gemini_data.get("health_status", "Scanning")
-        global_conf = gemini_data.get("confidence", 85)
+        # --- 1. DRAW TARGET SCAN RETICLE IF NO PLANT DISEASE IN VIEW ---
+        rx1, ry1, rx2, ry2 = target_roi
+        if len(local_yolo_boxes) == 0:
+            c_len = 24
+            bracket_color = (0, 180, 240)
+            # Reticle corners
+            cv2.line(canvas, (rx1, ry1), (rx1 + c_len, ry1), bracket_color, 2)
+            cv2.line(canvas, (rx1, ry1), (rx1, ry1 + c_len), bracket_color, 2)
+            cv2.line(canvas, (rx2, ry1), (rx2 - c_len, ry1), bracket_color, 2)
+            cv2.line(canvas, (rx2, ry1), (rx2, ry1 + c_len), bracket_color, 2)
+            cv2.line(canvas, (rx1, ry2), (rx1 + c_len, ry2), bracket_color, 2)
+            cv2.line(canvas, (rx1, ry2), (rx1, ry2 - c_len), bracket_color, 2)
+            cv2.line(canvas, (rx2, ry2), (rx2 - c_len, ry2), bracket_color, 2)
+            cv2.line(canvas, (rx2, ry2), (rx2, ry2 - c_len), bracket_color, 2)
 
-        # 1. Add Local YOLO Boxes
+            reticle_lbl = "ALIGN LEAF IN TARGET ZONE"
+            (rtw, rth), _ = cv2.getTextSize(reticle_lbl, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 1)
+            cv2.putText(canvas, reticle_lbl, (rx1 + (rx2 - rx1 - rtw)//2, ry1 - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, bracket_color, 1)
+
+        # --- 2. DRAW ANIMAL INTRUSION BOUNDING BOXES ---
+        for ab in animal_boxes:
+            ax1, ay1, abw, abh = ab["x"], ab["y"], ab["w"], ab["h"]
+            aclass = ab.get("class_name", "Animal")
+            aconf = ab.get("display_conf", 80)
+            is_threat = ab.get("is_threat", False)
+            box_color = ab.get("color", (0, 200, 255))
+
+            # Bounding box
+            cv2.rectangle(canvas, (ax1, ay1), (ax1 + abw, ay1 + abh), box_color, 2)
+
+            # High-tech corner brackets
+            c_len = min(22, min(abw, abh) // 4)
+            if c_len > 4:
+                cv2.line(canvas, (ax1, ay1), (ax1 + c_len, ay1), (255, 255, 255), 3)
+                cv2.line(canvas, (ax1, ay1), (ax1, ay1 + c_len), (255, 255, 255), 3)
+                cv2.line(canvas, (ax1 + abw, ay1 + abh), (ax1 + abw - c_len, ay1 + abh), (255, 255, 255), 3)
+                cv2.line(canvas, (ax1 + abw, ay1 + abh), (ax1 + abw, ay1 + abh - c_len), (255, 255, 255), 3)
+
+            prefix = "THREAT" if is_threat else "ANIMAL"
+            tag = f"{prefix}: {aclass.upper()} [{aconf}%]"
+            (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.46, 2)
+            box_top = max(0, ay1 - th - 8)
+            cv2.rectangle(canvas, (ax1, box_top), (ax1 + tw + 10, ay1), box_color, -1)
+            cv2.putText(canvas, tag, (ax1 + 5, ay1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 0, 0), 2)
+
+        # --- 3. DRAW GENUINE PLANT DISEASE BOUNDING BOXES ---
         for b in local_yolo_boxes:
-            final_boxes.append(b)
-
-        # 2. Add Gemini Spatial Boxes
-        gemini_parsed_boxes = []
-        for g_box in gemini_bboxes:
-            try:
-                box_2d = g_box.get("box_2d", [])
-                if len(box_2d) == 4:
-                    ymin, xmin, ymax, xmax = box_2d
-                    bx1 = int(xmin * w / 1000.0)
-                    by1 = int(ymin * h / 1000.0)
-                    bx2 = int(xmax * w / 1000.0)
-                    by2 = int(ymax * h / 1000.0)
-                    bw = max(12, bx2 - bx1)
-                    bh = max(12, by2 - by1)
-
-                    is_dis = g_box.get("is_diseased", health_global in ["Diseased", "Pest Infested", "Nutrient Deficient"])
-                    label_text = g_box.get("label", "")
-                    if not label_text:
-                        label_text = dis_name_global if (is_dis and dis_name_global != "None") else f"{plant_name_global} (Healthy)"
-
-                    gemini_parsed_boxes.append({
-                        "x": bx1, "y": by1, "w": bw, "h": bh,
-                        "conf": global_conf / 100.0,
-                        "label": label_text,
-                        "is_diseased": is_dis,
-                        "source": "Gemini AI"
-                    })
-            except Exception:
-                pass
-
-        if len(gemini_parsed_boxes) > 0:
-            final_boxes.extend(gemini_parsed_boxes)
-
-        # 3. Instant Foliage ROI Framing
-        if len(final_boxes) == 0 and len(instant_leaf_boxes) > 0:
-            for ib in instant_leaf_boxes:
-                is_dis = health_global in ["Diseased", "Pest Infested", "Nutrient Deficient"]
-                active_lbl = dis_name_global if (is_dis and dis_name_global != "None") else (f"{plant_name_global} (Healthy)" if health_global == "Healthy" else "Active Leaf [Analyzing...]")
-                final_boxes.append({
-                    "x": ib["x"], "y": ib["y"], "w": ib["w"], "h": ib["h"],
-                    "conf": 0.85 if health_global != "Scanning" else 0.70,
-                    "label": active_lbl,
-                    "is_diseased": is_dis,
-                    "source": "Instant Tracker"
-                })
-
-        # --- DRAW BOUNDING BOXES ---
-        for b in final_boxes:
-            x, y, bw, bh, conf, label = b["x"], b["y"], b["w"], b["h"], b["conf"], b["label"]
-            is_diseased = b.get("is_diseased", False)
-
-            if is_diseased:
-                box_color = (0, 50, 255) # Red
-            elif "analyzing" in label.lower():
-                box_color = (0, 220, 255) # Gold
-            else:
-                box_color = (0, 230, 90) # Green
+            x, y, bw, bh, disp_conf, label = b["x"], b["y"], b["w"], b["h"], b.get("display_conf", 85), b["label"]
+            box_color = (0, 30, 255)  # Crimson Red for plant disease
 
             cv2.rectangle(canvas, (x, y), (x + bw, y + bh), box_color, 2)
 
+            # High-tech corner highlights
             corner_len = min(22, min(bw, bh) // 4)
             if corner_len > 4:
                 cv2.line(canvas, (x, y), (x + corner_len, y), (255, 255, 255), 3)
@@ -418,286 +500,363 @@ class PlantPathologyHUD:
                 cv2.line(canvas, (x + bw, y + bh), (x + bw - corner_len, y + bh), (255, 255, 255), 3)
                 cv2.line(canvas, (x + bw, y + bh), (x + bw, y + bh - corner_len), (255, 255, 255), 3)
 
-            prefix = "[DISEASE]" if is_diseased else ("[SCANNING]" if "analyzing" in label.lower() else "[HEALTHY]")
-            tag = f"{prefix} {label} [{int(conf * 100)}%]"
-            (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.50, 2)
-            cv2.rectangle(canvas, (x, max(0, y - th - 8)), (x + tw + 10, y), box_color, -1)
-            cv2.putText(canvas, tag, (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255, 255, 255), 2)
+            tag = f"DISEASE: {label} [{disp_conf}%]"
+            (tw, th), _ = cv2.getTextSize(tag, cv2.FONT_HERSHEY_SIMPLEX, 0.48, 2)
+            box_top = max(0, y - th - 8)
+            cv2.rectangle(canvas, (x, box_top), (x + tw + 10, y), box_color, -1)
+            cv2.putText(canvas, tag, (x + 5, y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2)
 
-        # --- TOP HEADER STATUS BAR ---
+        # --- 4. TOP HEADER STATUS BAR (Two clean rows, zero overlap) ---
+        top_bar_h = 58
         overlay = canvas.copy()
-        cv2.rectangle(overlay, (0, 0), (w, 52), (15, 20, 24), -1)
-        cv2.addWeighted(overlay, 0.85, canvas, 0.15, 0, canvas)
+        cv2.rectangle(overlay, (0, 0), (w, top_bar_h), (15, 20, 24), -1)
+        cv2.addWeighted(overlay, 0.88, canvas, 0.12, 0, canvas)
+        cv2.line(canvas, (0, top_bar_h), (w, top_bar_h), (50, 70, 80), 1)
 
+        # Row 1: System Title & Dual Telemetry
         pulse = int((time.time() * 3) % 2)
         live_color = (0, 255, 0) if pulse == 0 else (0, 200, 50)
-        cv2.circle(canvas, (24, 26), 7, live_color, -1)
-        cv2.putText(canvas, "REAL-TIME PLANT AI", (40, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+        cv2.circle(canvas, (18, 18), 6, live_color, -1)
+        cv2.putText(canvas, "AGRO-EYE DUAL VISION AI", (32, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 2)
 
-        latency = gemini_data.get("latency_ms", 0)
-        fps_text = f"FPS: {fps:04.1f} | Latency: {latency}ms | Boxes: {len(final_boxes)}"
-        cv2.putText(canvas, fps_text, (270, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 230, 255), 2)
+        telemetry_text = f"FPS: {fps:04.1f} | Lat: {latency_ms}ms | DisThresh: {conf_thresh:.2f} | AnimThresh: {animal_thresh:.2f}"
+        cv2.putText(canvas, telemetry_text, (max(260, w - 460), 22), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 230, 255), 1)
 
-        # Status Badge
-        health = gemini_data.get("health_status", "Scanning")
-        dis_name = gemini_data.get("disease_name", "None")
+        # Row 2: Dual Detection Status Bar (Plant Disease + Animal Intrusion)
+        has_disease = detection_data.get("has_disease", False)
+        top_disease = detection_data.get("disease_name", "None")
+        top_crop = detection_data.get("plant_name", "Crop")
+        conf_pct = detection_data.get("display_confidence", 0)
 
-        if len(final_boxes) > 0 and any(p["is_diseased"] for p in final_boxes):
-            top_dis = [p["label"] for p in final_boxes if p["is_diseased"]][0]
-            badge_text = f"ALERT: {top_dis.upper()}"
-            h_color = (0, 60, 255)
-        elif health in ["Diseased", "Pest Infested", "Nutrient Deficient"]:
-            badge_text = f"ALERT: {health.upper()} ({dis_name if dis_name != 'None' else 'Detected'})"
-            h_color = (0, 60, 255)
-        elif health == "Healthy" or (len(final_boxes) > 0 and all(not p["is_diseased"] for p in final_boxes)):
-            badge_text = "PLANT: 100% HEALTHY"
-            h_color = (0, 230, 90)
-        elif len(instant_leaf_boxes) > 0:
-            badge_text = "LEAF DETECTED: ANALYZING PATHOLOGY..."
-            h_color = (0, 220, 255)
+        if has_disease and top_disease != "None":
+            plant_badge = f"🌿 DISEASE: {top_disease.upper()} on {top_crop.upper()} [{conf_pct}%]"
+            plant_color = (0, 70, 255)
         else:
-            badge_text = "PLANT: SCANNING FOLIAGE..."
-            h_color = (180, 180, 180)
+            plant_badge = "🌿 LEAF SCAN: Target Zone Active"
+            plant_color = (0, 220, 100)
 
-        cv2.putText(canvas, badge_text, (max(10, w - 520), 32), cv2.FONT_HERSHEY_SIMPLEX, 0.50, h_color, 2)
+        cv2.putText(canvas, plant_badge, (18, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.40, plant_color, 2)
 
-        # Draw Sensor Overlay in Upper Area if available
+        # Animal Status on right of Row 2
+        has_anim = animal_result is not None and getattr(animal_result, "has_animals", False)
+        if has_anim:
+            tot = getattr(animal_result, "total_animals", 1)
+            top_a = getattr(animal_result, "top_animal", "Animal")
+            a_conf = getattr(animal_result, "display_confidence", 80)
+            is_threat = getattr(animal_result, "has_threat", False)
+
+            if is_threat:
+                anim_badge = f"🚨 THREAT: {top_a.upper()} ({tot}) [{a_conf}%]"
+                anim_color = (0, 50, 255)
+            else:
+                anim_badge = f"🐾 ANIMAL: {top_a.upper()} ({tot}) [{a_conf}%]"
+                anim_color = (0, 220, 255)
+        else:
+            anim_badge = "🐾 PERIMETER: Clear"
+            anim_color = (0, 200, 120)
+
+        (abw_t, _), _ = cv2.getTextSize(anim_badge, cv2.FONT_HERSHEY_SIMPLEX, 0.40, 2)
+        cv2.putText(canvas, anim_badge, (max(w // 2, w - abw_t - 20), 46), cv2.FONT_HERSHEY_SIMPLEX, 0.40, anim_color, 2)
+
+        # Draw Sensor Overlay below top bar if available
         if sensor_overlay_text:
-            cv2.putText(canvas, sensor_overlay_text, (15, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+            cv2.putText(canvas, sensor_overlay_text, (15, top_bar_h + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1)
 
-        # --- SIDE DIAGNOSTICS DASHBOARD ---
+        # --- 5. SIDE DIAGNOSTICS TELEMETRY PANEL ---
         if hud_expanded and w >= 760:
             panel_w = 400
             panel_x = w - panel_w - 15
-            panel_y = 65
-            panel_h = min(h - 80, 590)
+            panel_y = top_bar_h + 10
+            panel_h = min(h - top_bar_h - 25, 590)
 
             card_overlay = canvas.copy()
             cv2.rectangle(card_overlay, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (12, 16, 20), -1)
             cv2.addWeighted(card_overlay, 0.90, canvas, 0.10, 0, canvas)
             cv2.rectangle(canvas, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (50, 70, 80), 1)
 
-            cv2.rectangle(canvas, (panel_x, panel_y), (panel_x + panel_w, panel_y + 35), (25, 35, 45), -1)
-            cv2.putText(canvas, "PLANT PATHOLOGY TELEMETRY", (panel_x + 15, panel_y + 24),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 240, 200), 2)
+            cv2.rectangle(canvas, (panel_x, panel_y), (panel_x + panel_w, panel_y + 32), (25, 35, 45), -1)
+            cv2.putText(canvas, "DUAL VISION AI DIAGNOSTICS", (panel_x + 15, panel_y + 22),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 200), 2)
 
-            curr_y = panel_y + 58
+            curr_y = panel_y + 52
 
-            plant_name = gemini_data.get("plant_name", "Scanning...")
-            pathogen_type = gemini_data.get("pathogen_type", "None")
-            severity = gemini_data.get("severity", "None")
-            conf = gemini_data.get("confidence", 0)
+            # Section 1: Plant Pathology
+            plant_name = detection_data.get("plant_name", "None")
+            pathogen_type = detection_data.get("pathogen_type", "None")
+            severity = detection_data.get("severity", "None")
 
-            cv2.putText(canvas, "CROP IDENTIFICATION", (panel_x + 15, curr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.52, (80, 255, 150), 2)
-            curr_y += 20
-            cv2.putText(canvas, f"Crop Species: {plant_name}", (panel_x + 20, curr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (230, 230, 230), 1)
-            curr_y += 20
-            cv2.putText(canvas, f"Pathogen Type: {pathogen_type}", (panel_x + 20, curr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (180, 220, 240), 1)
-            curr_y += 26
+            cv2.putText(canvas, "🌿 CROP PATHOLOGY STATUS", (panel_x + 15, curr_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (80, 255, 150), 2)
+            curr_y += 18
+            cv2.putText(canvas, f"Target Crop: {plant_name}", (panel_x + 20, curr_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (230, 230, 230), 1)
+            curr_y += 18
+            cv2.putText(canvas, f"Pathogen: {pathogen_type}", (panel_x + 20, curr_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 220, 240), 1)
+            curr_y += 22
 
-            cv2.line(canvas, (panel_x + 15, curr_y - 6), (panel_x + panel_w - 15, curr_y - 6), (45, 55, 65), 1)
-
-            cv2.putText(canvas, "PATHOLOGY DIAGNOSIS", (panel_x + 15, curr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 180, 80), 2)
-            curr_y += 20
-
-            dis_color = (0, 230, 90) if health == "Healthy" else ((0, 60, 255) if health in ["Diseased", "Pest Infested", "Nutrient Deficient"] else (200, 200, 200))
-            cv2.putText(canvas, f"Condition: {health}", (panel_x + 20, curr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, dis_color, 2)
+            health_status = f"Infected ({top_disease})" if (has_disease and top_disease != "None") else "Monitoring (No Disease)"
+            dis_color = (0, 50, 255) if has_disease else (0, 230, 90)
+            cv2.putText(canvas, f"Health: {health_status}", (panel_x + 20, curr_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, dis_color, 1)
             curr_y += 20
 
-            if dis_name and dis_name != "None":
-                cv2.putText(canvas, f"Diagnosis: {dis_name}", (panel_x + 20, curr_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 90, 255), 2)
-                curr_y += 20
-
-            sev_color = (0, 220, 100)
-            if severity in ["Moderate", "Medium"]:
-                sev_color = (0, 180, 255)
-            elif severity in ["Severe", "High"]:
-                sev_color = (0, 0, 255)
-
-            cv2.putText(canvas, f"Severity: {severity} | Confidence: {conf}%", (panel_x + 20, curr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.44, sev_color, 1)
-            curr_y += 24
-
-            symptoms = gemini_data.get("symptoms", "None")
-            if symptoms and symptoms != "None":
-                cv2.putText(canvas, "Observed Symptoms:", (panel_x + 20, curr_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.44, (170, 200, 200), 1)
+            org_rem = detection_data.get("organic_remedy", "")
+            if org_rem:
+                cv2.putText(canvas, "Bio-Remedy:", (panel_x + 20, curr_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 240, 255), 1)
                 curr_y += 16
-                sym_lines = [symptoms[i:i+44] for i in range(0, min(len(symptoms), 88), 44)]
-                for line in sym_lines:
-                    cv2.putText(canvas, f"  * {line}", (panel_x + 20, curr_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 220), 1)
-                    curr_y += 16
-
-            curr_y += 6
-            cv2.line(canvas, (panel_x + 15, curr_y - 4), (panel_x + panel_w - 15, curr_y - 4), (45, 55, 65), 1)
-
-            org_rem = gemini_data.get("organic_remedy", "")
-            chem_rem = gemini_data.get("chemical_remedy", "")
-
-            if org_rem and org_rem != "None":
-                cv2.putText(canvas, "ORGANIC REMEDY / BIOLOGICAL:", (panel_x + 15, curr_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (0, 240, 255), 2)
-                curr_y += 18
-                org_lines = [org_rem[i:i+44] for i in range(0, min(len(org_rem), 88), 44)]
-                for line in org_lines:
+                for line in [org_rem[i:i+44] for i in range(0, min(len(org_rem), 44), 44)]:
                     cv2.putText(canvas, f"{line}", (panel_x + 20, curr_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 245, 255), 1)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.36, (180, 245, 255), 1)
                     curr_y += 16
 
-            if chem_rem and chem_rem != "None":
-                curr_y += 4
-                cv2.putText(canvas, "CHEMICAL / FUNGICIDE:", (panel_x + 15, curr_y),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 160, 200), 2)
+            curr_y += 4
+            cv2.line(canvas, (panel_x + 15, curr_y), (panel_x + panel_w - 15, curr_y), (45, 55, 65), 1)
+            curr_y += 18
+
+            # Section 2: Wildlife & Animal Intrusion
+            cv2.putText(canvas, "🐾 WILDLIFE & PERIMETER GUARD", (panel_x + 15, curr_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 200, 50), 2)
+            curr_y += 20
+
+            if has_anim:
+                counts = getattr(animal_result, "counts", {})
+                count_str = ", ".join([f"{k}: {v}" for k, v in counts.items()]) if counts else "Detected"
+                threat_lvl = getattr(animal_result, "threat_level", "Intrusion")
+
+                cv2.putText(canvas, f"Intrusion: {threat_lvl}", (panel_x + 20, curr_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 100, 255) if "CRITICAL" in threat_lvl else (0, 220, 255), 1)
                 curr_y += 18
-                chem_lines = [chem_rem[i:i+44] for i in range(0, min(len(chem_rem), 88), 44)]
-                for line in chem_lines:
-                    cv2.putText(canvas, f"{line}", (panel_x + 20, curr_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 210, 230), 1)
-                    curr_y += 16
+                cv2.putText(canvas, f"Animals: {count_str}", (panel_x + 20, curr_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.40, (240, 240, 240), 1)
+                curr_y += 18
+            else:
+                cv2.putText(canvas, "Perimeter Status: SECURE (No animals in field)", (panel_x + 20, curr_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 230, 100), 1)
+                curr_y += 18
 
             curr_y = panel_y + panel_h - 22
-            last_sync = gemini_data.get("last_updated", "N/A")
-            active_m = gemini_data.get("active_model", "Gemini Cloud")
-            cv2.putText(canvas, f"AI Sync: {last_sync} ({active_m})", (panel_x + 15, curr_y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 140, 150), 1)
+            cv2.putText(canvas, "Engines: YOLOv8 Plant + YOLO11 Animal AI", (panel_x + 15, curr_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.36, (130, 150, 160), 1)
 
-        instructions = "[Q/ESC] Quit  |  [SPACE] Instant AI Re-Scan  |  [S] Save Snapshot  |  [H] Toggle HUD"
-        cv2.putText(canvas, instructions, (15, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (200, 220, 230), 1)
+        instructions = "[Q] Quit  |  [C] Switch Cam  |  [S] Save  |  [H] HUD  |  [A] Animal AI  |  [+] / [-] Sens"
+        cv2.putText(canvas, instructions, (15, h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 230), 1)
+
+        return canvas
 
         return canvas
 
 
 class DetectionResult:
-    """Unified result container for system-wide consumption."""
+    """Standardized result container for plant disease detections."""
     def __init__(
         self,
         has_disease: bool = False,
-        top_class: str = "",
+        top_class: str = "None",
         confidence: float = 0.0,
+        display_confidence: int = 0,
         severity: str = "None",
         organic_remedy: str = "",
         chemical_remedy: str = "",
-        plant_name: str = "Unknown",
+        plant_name: str = "Crop / Plant",
+        model_name: str = "YOLOv8 disease_model.pt",
         raw_response: Optional[Dict[str, Any]] = None
     ):
         self.has_disease = has_disease
         self.top_class = top_class
         self.confidence = confidence
+        self.display_confidence = display_confidence
         self.severity = severity
         self.organic_remedy = organic_remedy
         self.chemical_remedy = chemical_remedy
         self.plant_name = plant_name
+        self.model_name = model_name
         self.raw_response = raw_response or {}
 
 
 class DiseaseDetector:
     """
-    Multi-Tiered High-Speed Dual Vision Engine:
-      1. Local Fast Foliage Saliency Tracker (0-5ms)
-      2. Local YOLO Plant Disease Model (10ms)
-      3. Continuous Async Gemini Multimodal Pathologist
+    100% Offline Plant Disease Detection System:
+      - Native Multi-Scale YOLOv8 Neural Network (models/disease_model.pt)
+      - Exact 17-Class Agricultural Pathology & Remedy Knowledge Base
     """
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        model_name: str = "gemini-3.5-flash-lite",
-        ai_interval: float = 0.8,
-        confidence_threshold: float = 0.25
+        model_path: Optional[str] = None,
+        confidence_threshold: float = 0.15,
+        persistence_sec: float = 2.0,
+        **kwargs
     ):
         self.confidence_threshold = confidence_threshold
-        self.foliage_tracker = FastFoliageTracker()
-        self.local_detector = LocalPlantDetector(conf_thresh=confidence_threshold)
-        self.pathologist = GeminiPlantPathologist(
-            api_key=api_key,
-            model_name=model_name,
-            interval=ai_interval
-        ).start()
+        self.box_persistence_sec = persistence_sec
+        self.local_detector = LocalPlantDetector(
+            model_path=model_path,
+            conf_thresh=confidence_threshold
+        )
+        self.last_latency_ms = 0
+        self.last_log_time = 0.0
+        self.last_target_roi = (100, 50, 540, 430)
+        self.last_detection_time = 0.0
+        self.persisted_boxes: List[dict] = []
+        self.persisted_result: Optional[DetectionResult] = None
+        self.persisted_data: Optional[Dict[str, Any]] = None
 
-    def update_frame(self, frame: np.ndarray):
-        """Streams newest camera frame into background Gemini pathologist."""
-        self.pathologist.update_frame(frame)
-
-    def request_instant_scan(self):
-        """Forces an immediate Gemini AI re-scan."""
-        self.pathologist.request_instant_scan()
+    def adjust_threshold(self, delta: float):
+        """Allows live dynamic adjustment of confidence threshold."""
+        self.confidence_threshold = max(0.02, min(0.90, round(self.confidence_threshold + delta, 2)))
+        self.local_detector.conf_thresh = self.confidence_threshold
+        logger.info(f"Confidence threshold adjusted to: {self.confidence_threshold:.2f}")
 
     def process_frame(self, frame: np.ndarray) -> Tuple[DetectionResult, List[dict], List[dict], Dict[str, Any]]:
         """
-        Executes instant local inference + merges with background Gemini diagnosis.
-        Returns (DetectionResult, local_yolo_boxes, instant_leaf_boxes, gemini_data).
+        Runs multi-scale offline YOLOv8 inference on the input frame.
+        Maintains a 2.0-second persistence window so bounding boxes stay firmly locked on target.
+        Returns:
+          (DetectionResult, active_yolo_boxes, instant_leaf_boxes, detection_data)
         """
-        self.update_frame(frame)
+        t0 = time.time()
+        now = time.time()
 
-        # 1. Instant Leaf Saliency Tracker (3ms)
-        instant_leaf_boxes = self.foliage_tracker.extract_leaf_boxes(frame)
+        # Multi-scale YOLOv8 Disease Model Inference
+        raw_yolo_boxes, target_roi = self.local_detector.detect_multiscale(frame)
+        self.last_target_roi = target_roi
+        self.last_latency_ms = int((time.time() - t0) * 1000)
 
-        # 2. Local YOLO Plant Disease Detector (10ms)
-        local_yolo_boxes = self.local_detector.detect(frame)
-
-        # 3. Retrieve Latest Background Gemini Pathology
-        gemini_data = self.pathologist.get_latest_result()
-
-        # Determine disease state across all tiers
-        has_disease = False
-        top_disease = "None"
-        confidence = 0.0
-
-        # Tier A: Local YOLO detection
-        diseased_yolo = [b for b in local_yolo_boxes if b.get("is_diseased", False)]
-        if len(diseased_yolo) > 0:
+        if len(raw_yolo_boxes) > 0:
             has_disease = True
-            top_disease = diseased_yolo[0]["label"]
-            confidence = diseased_yolo[0]["conf"]
+            top_box = max(raw_yolo_boxes, key=lambda b: b["conf"])
+            top_disease = top_box["label"]
+            confidence = top_box["conf"]
+            raw_name = top_box.get("raw_label", top_disease)
+            disease_info = lookup_agronomic_info(raw_name, confidence)
+            display_conf = disease_info.get("display_confidence", 85)
 
-        # Tier B: Gemini Deep Diagnosis
-        elif gemini_data.get("health_status") in ["Diseased", "Pest Infested", "Nutrient Deficient"]:
-            has_disease = True
-            dis_name = gemini_data.get("disease_name", "None")
-            top_disease = dis_name if dis_name != "None" else gemini_data.get("health_status", "Diseased Foliage")
-            confidence = float(gemini_data.get("confidence", 85)) / 100.0
+            detection_data = {
+                "has_disease": has_disease,
+                "disease_name": top_disease,
+                "confidence": confidence,
+                "display_confidence": display_conf,
+                "plant_name": disease_info.get("crop", "Crop / Plant"),
+                "pathogen_type": disease_info.get("pathogen", "None"),
+                "severity": disease_info.get("severity", "None"),
+                "symptoms": disease_info.get("symptoms", ""),
+                "organic_remedy": disease_info.get("organic_remedy", ""),
+                "chemical_remedy": disease_info.get("chemical_remedy", ""),
+                "latency_ms": self.last_latency_ms
+            }
 
-        result = DetectionResult(
-            has_disease=has_disease,
-            top_class=top_disease,
-            confidence=confidence,
-            severity=gemini_data.get("severity", "None"),
-            organic_remedy=gemini_data.get("organic_remedy", ""),
-            chemical_remedy=gemini_data.get("chemical_remedy", ""),
-            plant_name=gemini_data.get("plant_name", "Unknown"),
-            raw_response=gemini_data
-        )
+            result = DetectionResult(
+                has_disease=has_disease,
+                top_class=top_disease,
+                confidence=confidence,
+                display_confidence=display_conf,
+                severity=disease_info.get("severity", "None"),
+                organic_remedy=disease_info.get("organic_remedy", ""),
+                chemical_remedy=disease_info.get("chemical_remedy", ""),
+                plant_name=disease_info.get("crop", "Crop / Plant"),
+                model_name="YOLOv8 disease_model.pt",
+                raw_response=detection_data
+            )
 
-        return result, local_yolo_boxes, instant_leaf_boxes, gemini_data
+            # Refresh 2-second persistence cache with newest box coordinates
+            self.last_detection_time = time.time()
+            self.persisted_boxes = raw_yolo_boxes
+            self.persisted_result = result
+            self.persisted_data = detection_data
+
+            if now - self.last_log_time >= 2.5:
+                self.last_log_time = now
+                logger.info(f"Offline YOLOv8 -> 🚨 DISEASE DETECTED: {top_disease} [{display_conf}%] on {disease_info.get('crop')} | {self.last_latency_ms}ms")
+
+            return result, raw_yolo_boxes, [], detection_data
+
+        elif (now - self.last_detection_time) <= self.box_persistence_sec and self.persisted_result is not None:
+            # Maintain 2-second persistence lock-on
+            result = self.persisted_result
+            active_boxes = self.persisted_boxes
+            detection_data = self.persisted_data.copy()
+            detection_data["latency_ms"] = self.last_latency_ms
+            return result, active_boxes, [], detection_data
+
+        else:
+            # 2 seconds elapsed with no target in view
+            self.persisted_boxes = []
+            self.persisted_result = None
+            self.persisted_data = None
+
+            disease_info = {
+                "crop": "Crop / Plant",
+                "disease": "None",
+                "pathogen": "None",
+                "symptoms": "Scanning foliage... Hold leaf in target zone to diagnose.",
+                "organic_remedy": "",
+                "chemical_remedy": "",
+                "is_diseased": False,
+                "clean_name": "None",
+                "severity": "None",
+                "display_confidence": 0
+            }
+
+            detection_data = {
+                "has_disease": False,
+                "disease_name": "None",
+                "confidence": 0.0,
+                "display_confidence": 0,
+                "plant_name": "Crop / Plant",
+                "pathogen_type": "None",
+                "severity": "None",
+                "symptoms": disease_info["symptoms"],
+                "organic_remedy": "",
+                "chemical_remedy": "",
+                "latency_ms": self.last_latency_ms
+            }
+
+            result = DetectionResult(
+                has_disease=False,
+                top_class="None",
+                confidence=0.0,
+                display_confidence=0,
+                severity="None",
+                organic_remedy="",
+                chemical_remedy="",
+                plant_name="Crop / Plant",
+                model_name="YOLOv8 disease_model.pt",
+                raw_response=detection_data
+            )
+
+            return result, [], [], detection_data
 
     def draw_hud(
         self,
         frame: np.ndarray,
         fps: float,
-        gemini_data: Dict[str, Any],
+        detection_data: Dict[str, Any],
         local_yolo_boxes: List[dict],
-        instant_leaf_boxes: List[dict],
+        target_roi: Optional[Tuple[int, int, int, int]] = None,
+        animal_boxes: Optional[List[dict]] = None,
+        animal_result: Optional[Any] = None,
+        animal_thresh: float = 0.35,
         hud_expanded: bool = True,
-        sensor_overlay_text: Optional[str] = None
+        sensor_overlay_text: Optional[str] = None,
+        **kwargs
     ) -> np.ndarray:
-        """Renders comprehensive cyber-agronomic HUD."""
+        """Renders the comprehensive offline agronomic and wildlife HUD."""
         return PlantPathologyHUD.draw(
             frame=frame,
             fps=fps,
-            gemini_data=gemini_data,
-            local_yolo_boxes=local_yolo_boxes,
-            instant_leaf_boxes=instant_leaf_boxes,
-            hud_expanded=hud_expanded,
+            latency_ms=self.last_latency_ms,
             conf_thresh=self.confidence_threshold,
+            detection_data=detection_data,
+            local_yolo_boxes=local_yolo_boxes,
+            target_roi=target_roi or self.last_target_roi,
+            animal_boxes=animal_boxes,
+            animal_result=animal_result,
+            animal_thresh=animal_thresh,
+            hud_expanded=hud_expanded,
             sensor_overlay_text=sensor_overlay_text
         )
 
     def stop(self):
-        """Stops background Gemini pathologist threads."""
-        self.pathologist.stop()
+        """No background threads to stop in pure offline mode."""
+        pass

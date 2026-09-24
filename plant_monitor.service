@@ -1,5 +1,5 @@
 [Unit]
-Description=Raspberry Pi Plant Detection and Monitoring System
+Description=Raspberry Pi Plant Detection and Monitoring System (100% Offline YOLOv8)
 After=network.target
 
 [Service]
@@ -10,7 +10,7 @@ ExecStart=/home/pi/plant_system/venv/bin/python main.py
 Restart=always
 RestartSec=10
 Environment=ENABLE_GUI_DISPLAY=False
-Environment=ROBOFLOW_API_KEY=FHXMDlKX559SGvrIR5fB
+Environment=YOLO_MODEL_PATH=models/disease_model.pt
 
 [Install]
 WantedBy=multi-user.target

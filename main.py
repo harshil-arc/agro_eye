@@ -19,15 +19,17 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from config import (
     CAMERA_WIDTH, CAMERA_HEIGHT, ROI_SIZE,
     SENSOR_POLL_INTERVAL, ENABLE_GUI_DISPLAY,
-    GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_AI_INTERVAL, CONFIDENCE_THRESHOLD
+    YOLO_MODEL_PATH, CONFIDENCE_THRESHOLD,
+    ANIMAL_MODEL_PATH, ANIMAL_CONF_THRESHOLD, ENABLE_ANIMAL_DETECTION
 )
 from utils.logger import logger
 from database import init_db, DatabaseRepository, DatabaseSyncWorker
 from camera import USBCamera
-from ai import DiseaseDetector, DetectionResult
+from ai import DiseaseDetector, DetectionResult, AnimalDetector, AnimalDetectionResult
 from sensors import SensorManager
 from firebase import RealtimeDatabaseManager, StorageUploader
 from lora import LoRaAlertManager
+from streaming import WebRTCStreamer
 
 class PlantDetectionSystem:
     def __init__(self):
@@ -35,7 +37,7 @@ class PlantDetectionSystem:
 
         # Initialize Subsystems
         logger.info("==========================================")
-        logger.info(" Initializing Plant Detection System")
+        logger.info(" Initializing AgroEye Dual Vision AI System")
         logger.info("==========================================")
 
         # 1. Local Database (WAL mode, FIFO 50-record capping)
@@ -43,30 +45,45 @@ class PlantDetectionSystem:
         self.repo = DatabaseRepository()
         self.sync_worker = DatabaseSyncWorker()
 
-        # 2. Camera & High-Speed Dual Vision AI (Instant Foliage + YOLO + Background Gemini AI)
+        # 2. Camera & 100% Offline AI Vision Models
         self.camera = USBCamera(width=CAMERA_WIDTH, height=CAMERA_HEIGHT, roi_size=ROI_SIZE)
+        
+        # Model 1: Plant Pathology Vision AI
         self.detector = DiseaseDetector(
-            api_key=GEMINI_API_KEY,
-            model_name=GEMINI_MODEL_NAME,
-            ai_interval=GEMINI_AI_INTERVAL,
+            model_path=YOLO_MODEL_PATH,
             confidence_threshold=CONFIDENCE_THRESHOLD
         )
+
+        # Model 2: Wildlife & Farm Intrusion Vision AI (D:\animal_detection_model)
+        self.animal_detector = AnimalDetector(
+            model_path=ANIMAL_MODEL_PATH,
+            confidence_threshold=ANIMAL_CONF_THRESHOLD
+        )
+        self.enable_animal_ai = ENABLE_ANIMAL_DETECTION
 
         # 3. Sensors
         self.sensor_mgr = SensorManager()
 
-        # 4. Cloud & LoRa
+        # 4. Cloud, LoRa & WebRTC Live Streaming
         self.rtdb = RealtimeDatabaseManager()
         self.storage = StorageUploader()
         self.lora = LoRaAlertManager()
+        self.streamer = WebRTCStreamer()
+
 
         # State & Threading
         self.latest_result: DetectionResult = DetectionResult()
+        self.latest_animal_result: AnimalDetectionResult = AnimalDetectionResult()
         self.last_sensor_time: float = 0.0
         self.latest_sensor_data: dict = {}
         self.hud_expanded: bool = True
         self.last_disease_alert_time: float = 0.0
-        self.disease_alert_cooldown: float = 4.0  # seconds between repeated auto-snapshots / alerts
+        self.disease_alert_cooldown: float = 4.0
+        self.consecutive_disease_frames: int = 0
+
+        self.last_animal_alert_time: float = 0.0
+        self.animal_alert_cooldown: float = 4.0
+        self.consecutive_animal_frames: int = 0
 
     def _sensor_loop(self):
         """Background loop to periodically read sensors, save to DB, sync to Firebase, and broadcast over LoRa."""
@@ -138,14 +155,16 @@ class PlantDetectionSystem:
             return
         self.last_disease_alert_time = now
 
-        logger.warning(f"🚨 DISEASE DETECTED: {result.top_class} (Confidence: {result.confidence:.2f})")
+        disp_conf = getattr(result, "display_confidence", int(result.confidence * 100))
+        logger.warning(f"🚨 DISEASE DETECTED: {result.top_class} (Match: {disp_conf}%)")
 
         # 1. Save Automatic Snapshot locally
         clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', result.top_class)
         snapshot_path = self.camera.save_snapshot(frame, prefix=f"disease_{clean_name}")
 
         # 2. Transmit over LoRa SX127x to ESP32 OLED receiver
-        self.lora.trigger_disease_alert(result.top_class, result.confidence)
+        self.lora.update_latest_disease(result.top_class, float(disp_conf))
+        self.lora.trigger_disease_alert(result.top_class, float(disp_conf))
 
         # 3. Log event into local SQLite database (persists in case of no internet)
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -154,7 +173,7 @@ class PlantDetectionSystem:
             timestamp=now_iso,
             datetime_str=dt_str,
             disease_name=result.top_class,
-            confidence=result.confidence,
+            confidence=float(disp_conf) / 100.0,
             snapshot_path=snapshot_path
         )
 
@@ -173,7 +192,7 @@ class PlantDetectionSystem:
                 alert_payload = {
                     "timestamp": now_iso,
                     "datetime": dt_str,
-                    "model_name": GEMINI_MODEL_NAME,
+                    "model_name": "yolov8-disease-model",
                     "disease_name": result.top_class,
                     "confidence": round(result.confidence, 4),
                     "severity": result.severity,
@@ -202,6 +221,74 @@ class PlantDetectionSystem:
 
         threading.Thread(target=upload_and_sync, daemon=True).start()
 
+    def _handle_animal_event(self, frame: np.ndarray, animal_result: AnimalDetectionResult):
+        """
+        Triggered when wildlife or farm animal intrusion is detected:
+        1. Saves automatic snapshot locally
+        2. Transmits instant Emergency Intrusion Alert over LoRa
+        3. Asynchronously uploads snapshot to Firebase Storage & RTDB
+        """
+        now = time.time()
+        if (now - self.last_animal_alert_time) < self.animal_alert_cooldown:
+            return
+        self.last_animal_alert_time = now
+
+        top_animal = animal_result.top_animal
+        total = animal_result.total_animals
+        conf = animal_result.display_confidence
+        is_threat = animal_result.has_threat
+        threat_level = animal_result.threat_level
+
+        logger.warning(f"🐾 ANIMAL DETECTED: {top_animal} (Count: {total}, Match: {conf}%, Status: {threat_level})")
+
+        # 1. Save Automatic Snapshot locally
+        clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', top_animal)
+        snapshot_path = self.camera.save_snapshot(frame, prefix=f"animal_{clean_name}")
+
+        # 2. Transmit over LoRa SX127x
+        self.lora.trigger_animal_alert(
+            animal_name=top_animal,
+            count=total,
+            confidence=float(conf),
+            is_threat=is_threat
+        )
+
+        # 3. Asynchronously upload to Firebase
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        dt_str = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        def upload_animal_sync():
+            try:
+                photo_url = self.storage.upload_image(
+                    local_image_path=snapshot_path,
+                    metadata={
+                        "animal_name": top_animal,
+                        "count": str(total),
+                        "confidence": f"{animal_result.top_confidence:.2f}",
+                        "timestamp": now_iso
+                    }
+                )
+
+                animal_payload = {
+                    "timestamp": now_iso,
+                    "datetime": dt_str,
+                    "model_name": animal_result.model_name,
+                    "animal_name": top_animal,
+                    "total_count": total,
+                    "species_breakdown": animal_result.counts,
+                    "confidence": round(animal_result.top_confidence, 4),
+                    "is_crop_threat": is_threat,
+                    "threat_level": threat_level,
+                    "photo_url": photo_url or ""
+                }
+
+                self.rtdb.push_disease_event(animal_payload)
+                logger.info(f"Animal intrusion alert for '{top_animal}' sent to Firebase: {photo_url}")
+            except Exception as e:
+                logger.error(f"Failed to sync animal intrusion event to Firebase: {e}")
+
+        threading.Thread(target=upload_animal_sync, daemon=True).start()
+
     def start(self):
         """Starts the main system pipeline."""
         self.running = True
@@ -213,16 +300,21 @@ class PlantDetectionSystem:
         sensor_thread = threading.Thread(target=self._sensor_loop, daemon=True)
         sensor_thread.start()
 
-        # 3. Open USB Camera
+        # 3. Start WebRTC Live Video Streaming Engine (Pi -> Internet -> Farmer App)
+        self.streamer.start()
+
+        # 4. Open USB Camera
         camera_ok = self.camera.open()
         if not camera_ok:
             logger.warning("Camera not detected at startup. System will run sensor monitoring and retry camera connection.")
 
         logger.info("\n=======================================================")
-        logger.info(" System Active - Real-Time Plant Vision & Sensor Bridge")
-        logger.info(f" AI Vision Model : {GEMINI_MODEL_NAME}")
-        logger.info(f" LoRa Transmitter : 433 MHz / SF7 / BW125")
-        logger.info(" Controls: [Q] Quit  |  [SPACE] Instant AI Re-scan  |  [H] Toggle HUD")
+        logger.info(" System Active - Dual Vision AI (Plant + Animal Detection)")
+        logger.info(" Plant Disease Model : 100% Offline (models/disease_model.pt)")
+        logger.info(" Animal AI Model     : Wildlife & Intrusion Guard")
+        logger.info(" LoRa Transmitter    : 433 MHz / SF7 / BW125")
+        logger.info(" WebRTC Streaming    : Active (Pi -> Internet -> Farmer's App)")
+        logger.info(" Controls: [Q] Quit | [C] Cam | [S] Save | [H] HUD | [A] Animal AI | [+/-] Sens")
         logger.info("=======================================================\n")
 
         fps_history = []
@@ -245,13 +337,29 @@ class PlantDetectionSystem:
                     time.sleep(0.01)
                     continue
 
-                # Run Multi-Tiered Dual Engine Detection (Instant Foliage Tracker + YOLO + Background Gemini)
-                result, local_yolo_boxes, instant_leaf_boxes, gemini_data = self.detector.process_frame(frame)
-                self.latest_result = result
+                # 1. Run 100% Offline Plant Pathology Model
+                plant_result, plant_boxes, _, det_data = self.detector.process_frame(frame)
+                self.latest_result = plant_result
 
-                # Check if disease was detected
-                if result.has_disease:
-                    self._handle_disease_event(frame, result)
+                if plant_result.has_disease:
+                    self.consecutive_disease_frames += 1
+                    if self.consecutive_disease_frames >= 2:
+                        self._handle_disease_event(frame, plant_result)
+                else:
+                    self.consecutive_disease_frames = 0
+
+                # 2. Run Animal & Wildlife Intrusion Model
+                animal_result = AnimalDetectionResult()
+                if self.enable_animal_ai and self.animal_detector.model_loaded:
+                    animal_result = self.animal_detector.detect(frame)
+                    self.latest_animal_result = animal_result
+
+                    if animal_result.has_animals:
+                        self.consecutive_animal_frames += 1
+                        if self.consecutive_animal_frames >= 2:
+                            self._handle_animal_event(frame, animal_result)
+                    else:
+                        self.consecutive_animal_frames = 0
 
                 # FPS Calculation
                 curr_time = time.time()
@@ -263,41 +371,58 @@ class PlantDetectionSystem:
                     fps_history.pop(0)
                 avg_fps = sum(fps_history) / len(fps_history)
 
-                # GUI Display Handling
+                # Prepare sensor overlay string
+                sensor_text = None
+                if self.latest_sensor_data:
+                    t = self.latest_sensor_data.get('temperature', '--')
+                    h = self.latest_sensor_data.get('humidity', '--')
+                    m = self.latest_sensor_data.get('soil_moisture', '--')
+                    mq = self.latest_sensor_data.get('mq135_raw', '--')
+                    sensor_text = f"Sensors: T:{t}C  H:{h}%  Soil:{m}%  Air:{mq}"
+
+                # Generate Annotated Frame with AI Bounding Boxes & Sensor HUD
+                annotated = self.detector.draw_hud(
+                    frame=frame,
+                    fps=avg_fps,
+                    detection_data=det_data,
+                    local_yolo_boxes=plant_boxes,
+                    animal_boxes=animal_result.boxes if self.enable_animal_ai else [],
+                    animal_result=animal_result if self.enable_animal_ai else None,
+                    animal_thresh=self.animal_detector.conf_thresh if self.enable_animal_ai else 0.35,
+                    hud_expanded=self.hud_expanded,
+                    sensor_overlay_text=sensor_text
+                )
+
+                # Push live frame to WebRTC Streamer buffer for remote farmer app
+                self.streamer.update_frame(annotated)
+
+                # GUI Display Handling (if desktop/monitor attached)
                 if ENABLE_GUI_DISPLAY:
-                    # Prepare sensor overlay string
-                    sensor_text = None
-                    if self.latest_sensor_data:
-                        t = self.latest_sensor_data.get('temperature', '--')
-                        h = self.latest_sensor_data.get('humidity', '--')
-                        m = self.latest_sensor_data.get('soil_moisture', '--')
-                        mq = self.latest_sensor_data.get('mq135_raw', '--')
-                        sensor_text = f"Sensors: T:{t}C  H:{h}%  Soil:{m}%  Air:{mq}"
-
-                    annotated = self.detector.draw_hud(
-                        frame=frame,
-                        fps=avg_fps,
-                        gemini_data=gemini_data,
-                        local_yolo_boxes=local_yolo_boxes,
-                        instant_leaf_boxes=instant_leaf_boxes,
-                        hud_expanded=self.hud_expanded,
-                        sensor_overlay_text=sensor_text
-                    )
-
-                    cv2.imshow("Plant Disease & Health Monitor", annotated)
+                    cv2.imshow("AgroEye - Plant Disease & Animal Intrusion Monitor", annotated)
                     key = cv2.waitKey(1) & 0xFF
                     if key in [ord('q'), ord('Q'), 27]:
                         logger.info("Quit command received.")
                         break
-                    elif key == ord(' '):
-                        logger.info("Triggering immediate Gemini AI re-scan...")
-                        self.detector.request_instant_scan()
                     elif key in [ord('h'), ord('H')]:
                         self.hud_expanded = not self.hud_expanded
                     elif key in [ord('s'), ord('S')]:
                         self.camera.save_snapshot(annotated, prefix="manual_report")
+                    elif key in [ord('c'), ord('C')]:
+                        self.camera.switch_camera()
+                    elif key in [ord('a'), ord('A')]:
+                        self.enable_animal_ai = not self.enable_animal_ai
+                        status_str = "ENABLED" if self.enable_animal_ai else "DISABLED"
+                        logger.info(f"Animal Intrusion AI is now: {status_str}")
+                    elif key in [ord('+'), ord('=')]:
+                        self.detector.adjust_threshold(+0.02)
+                        if self.enable_animal_ai:
+                            self.animal_detector.adjust_threshold(+0.05)
+                    elif key in [ord('-'), ord('_')]:
+                        self.detector.adjust_threshold(-0.02)
+                        if self.enable_animal_ai:
+                            self.animal_detector.adjust_threshold(-0.05)
                 else:
-                    time.sleep(0.03)
+                    time.sleep(0.01)
 
         except KeyboardInterrupt:
             logger.info("Shutdown signal received (KeyboardInterrupt).")
@@ -311,11 +436,13 @@ class PlantDetectionSystem:
         self.running = False
         logger.info("Stopping Plant Detection System...")
 
+        self.streamer.stop()
         self.camera.release()
         self.sensor_mgr.stop()
         self.detector.stop()
         self.sync_worker.stop()
         self.lora.lora.close()
+
 
         if ENABLE_GUI_DISPLAY:
             try:

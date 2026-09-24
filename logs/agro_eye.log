@@ -1,0 +1,27 @@
+[2026-09-15 17:23:46] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:46] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [ERROR] [AgroEye] LoRa Hardware Error: 'ImportError: No module named 'loralibPi5''. Make sure 'loralibPi5' is installed on Raspberry Pi 5.
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: D:\final ps 180 program\database\farm_system.db
+[2026-09-15 17:23:47] [WARNING] [AgroEye] LoRa TX Skipped (Transceiver not ready: ImportError: No module named 'loralibPi5')
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] Snapshot saved: snapshots\2026-09-15_17-23-47_tomato_early_blight_91.jpg
+[2026-09-15 17:23:47] [INFO] [AgroEye] Database record #1 saved -> Tomato Early Blight (Conf: 91.4%, Path: snapshots\2026-09-15_17-23-47_tomato_early_blight_91.jpg)
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:47] [INFO] [AgroEye] Arduino/ESP32 Serial receiver thread started.
+[2026-09-15 17:23:47] [WARNING] [AgroEye] Could not connect to Arduino/ESP32 (Could not open /dev/ttyUSB0 at bauds [9600, 115200, 57600]). Retrying...
+[2026-09-15 17:23:49] [INFO] [AgroEye] Arduino/ESP32 Serial receiver stopped.
+[2026-09-15 17:23:49] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:49] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:49] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:49] [INFO] [AgroEye] SQLite database initialized with WAL mode at: data/test_plant_system.db
+[2026-09-15 17:23:49] [INFO] [AgroEye] Arduino/ESP32 Serial receiver thread started.
+[2026-09-15 17:23:49] [WARNING] [AgroEye] Could not connect to Arduino/ESP32 (Could not open /dev/ttyUSB0 at bauds [9600, 115200, 57600]). Retrying...
+[2026-09-15 17:23:51] [INFO] [AgroEye] Arduino/ESP32 Serial receiver stopped.

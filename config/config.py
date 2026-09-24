@@ -30,24 +30,24 @@ except ImportError:
 ENABLE_GUI_DISPLAY = os.environ.get("ENABLE_GUI_DISPLAY", "True").lower() in ("true", "1", "yes")
 
 # ============================================================
-# CAMERA & AI INFERENCE CONFIGURATION
+# CAMERA & OFFLINE AI INFERENCE CONFIGURATION
 # ============================================================
-CAMERA_INDICES = [0, 1, 2]
+# Prioritize external USB camera (index 1) over laptop webcam (index 0)
+PREFERRED_CAMERA_INDEX = int(os.environ.get("CAMERA_INDEX", "1"))
+CAMERA_INDICES = [PREFERRED_CAMERA_INDEX, 0, 2] if PREFERRED_CAMERA_INDEX != 0 else [0, 1, 2]
+
 CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 ROI_SIZE = 360
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
-GEMINI_AI_INTERVAL = float(os.environ.get("GEMINI_INTERVAL", "0.8"))
+# 100% Offline YOLOv8 Plant Disease Model
+YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH", str(BASE_DIR / "models" / "disease_model.pt"))
+CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.15"))
 
-MODEL_ID = os.environ.get("ROBOFLOW_MODEL_ID", "detecting-diseases/5")
-API_KEY = os.environ.get("ROBOFLOW_API_KEY", "")
-ROBOFLOW_API_URL = os.environ.get("ROBOFLOW_API_URL", "https://detect.roboflow.com")
-CONFIDENCE_THRESHOLD = 0.25
-INFERENCE_INTERVAL = 0.5  # In seconds (throttle API rate)
-
-
+# Animal & Wildlife Detection Model (D:\animal_detection_model)
+ANIMAL_MODEL_PATH = os.environ.get("ANIMAL_MODEL_PATH", r"D:\animal_detection_model\yolo11m.pt")
+ANIMAL_CONF_THRESHOLD = float(os.environ.get("ANIMAL_CONF_THRESHOLD", "0.35"))
+ENABLE_ANIMAL_DETECTION = os.environ.get("ENABLE_ANIMAL_DETECTION", "True").lower() in ("true", "1", "yes")
 
 # ============================================================
 # SENSOR POLLING & THRESHOLDS
@@ -103,3 +103,26 @@ LORA_ALERT_COOLDOWN = 2.5  # seconds between repeated packet broadcasts
 # ============================================================
 SQLITE_DB_PATH = str(DATA_DIR / "plant_system.db")
 SYNC_INTERVAL = 10.0  # seconds to retry flushing offline buffer to Firebase
+
+# ============================================================
+# WEBRTC LIVE VIDEO STREAMING CONFIGURATION
+# ============================================================
+ENABLE_STREAMING = os.environ.get("ENABLE_STREAMING", "True").lower() in ("true", "1", "yes")
+STREAM_FPS = int(os.environ.get("STREAM_FPS", "20"))
+STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
+STREAM_HEIGHT = int(os.environ.get("STREAM_HEIGHT", "480"))
+WEBRTC_DEVICE_ID = os.environ.get("WEBRTC_DEVICE_ID", "pi_agroeye_01")
+WEBRTC_SESSION_PATH = f"webrtc_sessions/{WEBRTC_DEVICE_ID}"
+
+# STUN & TURN ICE Servers for NAT/Firewall Traversal (Pi -> Internet -> Farmer App)
+STUN_SERVERS = [
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+    "stun:stun2.l.google.com:19302",
+    "stun:stun3.l.google.com:19302"
+]
+
+TURN_URL = os.environ.get("TURN_URL", "turn:global.relay.metered.ca:80")
+TURN_USERNAME = os.environ.get("TURN_USERNAME", "openrelayproject")
+TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL", "openrelayproject")
+

@@ -75,7 +75,7 @@ class DatabaseSyncWorker:
 
             payload = {
                 "timestamp": ev["timestamp"],
-                "model_name": ev["model_name"] if "model_name" in ev.keys() else "gemini-plant-pathologist",
+                "model_name": ev["model_name"] if "model_name" in ev.keys() else "yolov8-disease-detector",
                 "disease_name": ev["class_name"] if "class_name" in ev.keys() else "disease",
                 "confidence": ev["confidence"],
                 "photo_url": image_url or ""

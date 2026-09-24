@@ -34,13 +34,16 @@ class USBCamera:
         """Searches and opens an available USB camera across configured indices and backends."""
         self.release()
         if verbose and not self._logged_no_cam:
-            logger.info("Searching for USB camera...")
+            logger.info("Searching for USB camera (prioritizing Index 1)...")
         backends = self._get_backends()
 
-        for camera_index in CAMERA_INDICES:
+        # Prioritize Camera 1 (External USB Webcam) over Camera 0 (Laptop)
+        search_indices = [1, 0, 2]
+
+        for camera_index in search_indices:
             for backend in backends:
                 try:
-                    cap = cv2.VideoCapture(camera_index, backend) if backend != cv2.CAP_ANY else cv2.VideoCapture(camera_index)
+                    cap = cv2.VideoCapture(camera_index, backend)
                     if cap.isOpened():
                         # Set resolution
                         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
@@ -53,7 +56,8 @@ class USBCamera:
                             self.active_index = camera_index
                             self.consecutive_errors = 0
                             self._logged_no_cam = False
-                            logger.info(f"USB camera successfully opened at index {camera_index} (Backend: {backend}, Res: {self.width}x{self.height})")
+                            cam_type = "USB External Webcam" if camera_index == 1 else f"Camera Device {camera_index}"
+                            logger.info(f"Camera opened at index {camera_index} ({cam_type}, Backend: {backend})")
                             return True
 
                         cap.release()
@@ -62,7 +66,7 @@ class USBCamera:
                     continue
 
         if not self._logged_no_cam:
-            logger.warning("No USB camera detected. System will continue monitoring sensors and retry camera connection.")
+            logger.warning("No camera detected. System will continue monitoring sensors and retry camera connection.")
             self._logged_no_cam = True
         return False
 
@@ -98,18 +102,46 @@ class USBCamera:
 
     def save_snapshot(self, frame: np.ndarray, prefix: str = "snapshot") -> str:
         """Saves a frame to disk with a timestamped filename and returns the file path."""
-        timestamp = int(time.time())
-        filepath = SNAPSHOT_DIR / f"{prefix}_{timestamp}.jpg"
-        cv2.imwrite(str(filepath), frame)
-        logger.info(f"Snapshot saved: {filepath}")
-        return str(filepath)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        filename = f"{prefix}_{timestamp}.jpg"
+        file_path = str(SNAPSHOT_DIR / filename)
+        cv2.imwrite(file_path, frame)
+        logger.info(f"Snapshot saved locally: {file_path}")
+        return file_path
+
+    def switch_camera(self) -> bool:
+        """Switches to the next available camera index."""
+        current = self.active_index if self.active_index is not None else 0
+        next_index = 0 if current == 1 else 1
+        logger.info(f"Switching camera to Index {next_index}...")
+        self.release()
+        backends = self._get_backends()
+        for backend in backends:
+            try:
+                cap = cv2.VideoCapture(next_index, backend)
+                if cap.isOpened():
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        self.cap = cap
+                        self.active_index = next_index
+                        cam_type = "USB External Webcam" if next_index == 1 else f"Camera Device {next_index}"
+                        logger.info(f"Successfully switched to index {next_index} ({cam_type})")
+                        return True
+                    cap.release()
+            except Exception:
+                pass
+
+        # Fallback to reopen
+        return self.open(verbose=True)
 
     def release(self):
-        """Releases the camera hardware."""
+        """Releases the camera hardware handle."""
         if self.cap is not None:
             try:
                 self.cap.release()
             except Exception:
                 pass
             self.cap = None
-            logger.info("USB camera released.")
+        self.active_index = None

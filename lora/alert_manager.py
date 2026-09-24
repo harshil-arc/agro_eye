@@ -104,3 +104,28 @@ class LoRaAlertManager:
         }
         packet_str = json.dumps(payload, separators=(',', ':'))
         return self.lora.transmit(packet_str)
+
+    def trigger_animal_alert(self, animal_name: str, count: int, confidence: float, is_threat: bool = True) -> bool:
+        """Dispatches an immediate high-priority wildlife / animal intrusion alert packet over LoRa."""
+        now = time.time()
+        payload = {
+            "type": "INTRUSION_ALERT",
+            "animal": animal_name,
+            "count": count,
+            "conf": round(confidence, 2),
+            "threat": 1 if is_threat else 0,
+            "time": time.strftime("%H:%M:%S")
+        }
+
+        packet_str = json.dumps(payload, separators=(',', ':'))
+        success = self.lora.transmit(packet_str)
+
+        dt_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.repo.insert_lora_alert(
+            timestamp=int(now),
+            datetime_str=dt_str,
+            alert_type="ANIMAL_INTRUSION_ALERT",
+            message=packet_str,
+            sent_status=1 if success else 0
+        )
+        return success
