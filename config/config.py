@@ -119,10 +119,21 @@ STUN_SERVERS = [
     "stun:stun.l.google.com:19302",
     "stun:stun1.l.google.com:19302",
     "stun:stun2.l.google.com:19302",
-    "stun:stun3.l.google.com:19302"
+    "stun:stun3.l.google.com:19302",
+    "stun:stun4.l.google.com:19302"
 ]
 
-TURN_URL = os.environ.get("TURN_URL", "turn:global.relay.metered.ca:80")
+TURN_SERVERS_CONFIG = [
+    {"urls": "turn:openrelay.metered.ca:80", "username": "openrelayproject", "credential": "openrelayproject"},
+    {"urls": "turn:openrelay.metered.ca:443", "username": "openrelayproject", "credential": "openrelayproject"},
+    {"urls": "turn:openrelay.metered.ca:443?transport=tcp", "username": "openrelayproject", "credential": "openrelayproject"},
+    {"urls": "turn:global.relay.metered.ca:80", "username": "openrelayproject", "credential": "openrelayproject"},
+    {"urls": "turn:global.relay.metered.ca:443", "username": "openrelayproject", "credential": "openrelayproject"},
+    {"urls": "turn:global.relay.metered.ca:443?transport=tcp", "username": "openrelayproject", "credential": "openrelayproject"}
+]
+
+TURN_URL = os.environ.get("TURN_URL", "turn:openrelay.metered.ca:80")
 TURN_USERNAME = os.environ.get("TURN_USERNAME", "openrelayproject")
 TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL", "openrelayproject")
+
 

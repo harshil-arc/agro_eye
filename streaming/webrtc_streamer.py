@@ -9,7 +9,7 @@ from aiortc.sdp import candidate_from_sdp
 
 from config import (
     ENABLE_STREAMING, STREAM_FPS, STREAM_WIDTH, STREAM_HEIGHT,
-    STUN_SERVERS, TURN_URL, TURN_USERNAME, TURN_CREDENTIAL,
+    STUN_SERVERS, TURN_SERVERS_CONFIG,
     WEBRTC_DEVICE_ID
 )
 from utils.logger import logger
@@ -40,16 +40,16 @@ class WebRTCStreamer:
         self._processed_candidates = set()
 
     def _build_rtc_config(self) -> RTCConfiguration:
-        """Constructs RTCConfiguration with Google STUN + Turnkey TURN relay servers."""
+        """Constructs RTCConfiguration with Google STUN + Multi-Port TURN relay servers."""
         ice_servers = []
         for stun in STUN_SERVERS:
             ice_servers.append(RTCIceServer(urls=stun))
 
-        if TURN_URL:
+        for turn_cfg in TURN_SERVERS_CONFIG:
             ice_servers.append(RTCIceServer(
-                urls=TURN_URL,
-                username=TURN_USERNAME,
-                credential=TURN_CREDENTIAL
+                urls=turn_cfg["urls"],
+                username=turn_cfg.get("username"),
+                credential=turn_cfg.get("credential")
             ))
 
         return RTCConfiguration(iceServers=ice_servers)
@@ -100,6 +100,10 @@ class WebRTCStreamer:
             elif state in ("failed", "closed", "disconnected"):
                 self.is_streaming = False
                 self.signaling.update_status("idle")
+                # Reset timestamp so client can reconnect immediately
+                if state == "failed":
+                    logger.warning("WebRTC connection failed. Resetting session for next attempt.")
+                    self.last_offer_timestamp = 0
 
         @self.pc.on("iceconnectionstatechange")
         async def on_ice_state():
@@ -107,16 +111,9 @@ class WebRTCStreamer:
                 return
             state = self.pc.iceConnectionState
             logger.info(f"🧊 WebRTC ICE Connection State -> {state.upper()}")
-
-        @self.pc.on("icecandidate")
-        async def on_ice_candidate(candidate):
-            if candidate:
-                candidate_dict = {
-                    "candidate": candidate.to_sdp(),
-                    "sdpMid": candidate.sdpMid,
-                    "sdpMLineIndex": candidate.sdpMLineIndex
-                }
-                self.signaling.send_ice_candidate(candidate_dict)
+            if state == "failed":
+                logger.warning("WebRTC ICE negotiation failed. Enabling fallback reconnect...")
+                self.last_offer_timestamp = 0
 
         # 1. Set Remote Description (Offer)
         offer = RTCSessionDescription(sdp=offer_dict["sdp"], type=offer_dict.get("type", "offer"))
@@ -148,13 +145,14 @@ class WebRTCStreamer:
                 if self.pc and self.pc.connectionState not in ("closed", "failed"):
                     client_candidates = self.signaling.get_client_ice_candidates()
                     for cand in client_candidates:
-                        cand_str = cand.get("candidate")
+                        cand_str = cand.get("candidate", "")
                         if cand_str and cand_str not in self._processed_candidates:
                             self._processed_candidates.add(cand_str)
                             try:
-                                ice_cand = candidate_from_sdp(cand_str.split(":", 1)[-1] if ":" in cand_str else cand_str)
-                                ice_cand.sdpMid = cand.get("sdpMid")
-                                ice_cand.sdpMLineIndex = cand.get("sdpMLineIndex")
+                                cand_clean = cand_str.replace("candidate:", "").strip()
+                                ice_cand = candidate_from_sdp(cand_clean)
+                                ice_cand.sdpMid = str(cand.get("sdpMid", "0")) if cand.get("sdpMid") is not None else "0"
+                                ice_cand.sdpMLineIndex = int(cand.get("sdpMLineIndex", 0)) if cand.get("sdpMLineIndex") is not None else 0
                                 await self.pc.addIceCandidate(ice_cand)
                             except Exception as e:
                                 logger.debug(f"Error adding client ICE candidate: {e}")
@@ -162,7 +160,8 @@ class WebRTCStreamer:
             except Exception as e:
                 logger.debug(f"WebRTC signaling poll error: {e}")
 
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(1.0)
+
 
     def _run_event_loop(self):
         """Target for background daemon thread."""
