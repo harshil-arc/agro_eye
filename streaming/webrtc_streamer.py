@@ -4,8 +4,18 @@ import time
 from typing import Optional, Dict, Any
 import numpy as np
 
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer, RTCIceCandidate
-from aiortc.sdp import candidate_from_sdp
+try:
+    from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer, RTCIceCandidate
+    from aiortc.sdp import candidate_from_sdp
+    AIORTC_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    RTCPeerConnection = None
+    RTCSessionDescription = None
+    RTCConfiguration = None
+    RTCIceServer = None
+    RTCIceCandidate = None
+    candidate_from_sdp = None
+    AIORTC_AVAILABLE = False
 
 from config import (
     ENABLE_STREAMING, STREAM_FPS, STREAM_WIDTH, STREAM_HEIGHT,
@@ -23,7 +33,10 @@ class WebRTCStreamer:
     with automatic STUN/TURN NAT traversal.
     """
     def __init__(self):
-        self.enabled = ENABLE_STREAMING
+        self.enabled = ENABLE_STREAMING and AIORTC_AVAILABLE
+        if ENABLE_STREAMING and not AIORTC_AVAILABLE:
+            logger.warning("WebRTC Live Streaming disabled: 'aiortc' package not found in this Python environment.")
+
         self.fps = STREAM_FPS
         self.width = STREAM_WIDTH
         self.height = STREAM_HEIGHT
@@ -31,7 +44,7 @@ class WebRTCStreamer:
         self.video_track = OpenCVVideoTrack(fps=self.fps, width=self.width, height=self.height)
         self.signaling = FirebaseWebRTCSignaling()
         
-        self.pc: Optional[RTCPeerConnection] = None
+        self.pc: Optional[Any] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.thread: Optional[threading.Thread] = None
         self.running = False

@@ -72,12 +72,10 @@ DHT_TYPE = os.environ.get("DHT_TYPE", "DHT22")
 SOIL_MOISTURE_CHANNEL = int(os.environ.get("SOIL_CHANNEL", "0"))
 
 # ============================================================
-# CAMERA SERVO & PTZ CONFIGURATION (Raspberry Pi GPIO)
+# CAMERA SERVO CONFIGURATION (Raspberry Pi GPIO)
 # ============================================================
 # Default: GPIO 18 (Physical Pin 12, Hardware PWM0) for Pan / Rotation Servo
 SERVO_PAN_PIN = int(os.environ.get("SERVO_PAN_PIN", "18"))
-# Default: GPIO 13 (Physical Pin 33, Hardware PWM1) for Tilt / Pitch Servo
-SERVO_TILT_PIN = int(os.environ.get("SERVO_TILT_PIN", "13"))
 ENABLE_SERVO = os.environ.get("ENABLE_SERVO", "True").lower() in ("true", "1", "yes")
 
 # Auto-Sweep Rotation Boundaries (degrees)

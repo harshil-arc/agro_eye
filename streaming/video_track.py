@@ -4,8 +4,15 @@ import asyncio
 import threading
 import cv2
 import numpy as np
-import av
-from aiortc import VideoStreamTrack
+try:
+    import av
+    from aiortc import VideoStreamTrack
+    AIORTC_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    av = None
+    VideoStreamTrack = object
+    AIORTC_AVAILABLE = False
+
 from typing import Optional
 from utils.logger import logger
 
@@ -18,7 +25,8 @@ class OpenCVVideoTrack(VideoStreamTrack):
     kind = "video"
 
     def __init__(self, fps: int = 25, width: int = 640, height: int = 480):
-        super().__init__()
+        if AIORTC_AVAILABLE:
+            super().__init__()
         self.fps = fps
         self.width = width
         self.height = height
@@ -50,10 +58,12 @@ class OpenCVVideoTrack(VideoStreamTrack):
             self._latest_frame = frame_resized
             self._last_frame_time = time.time()
 
-    async def recv(self) -> av.VideoFrame:
+    async def recv(self):
         """
         Pulls next frame on WebRTC clock cadence with sub-50ms latency.
         """
+        if not AIORTC_AVAILABLE or av is None:
+            return None
         pts, time_base = await self.next_timestamp()
         with self._lock:
             frame = self._latest_frame if self._latest_frame is not None else self._placeholder
