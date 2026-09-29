@@ -14,10 +14,18 @@ from typing import Optional, Dict, Any, Tuple, List
 
 import cv2
 import numpy as np
-import torch
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    torch = None
+    TORCH_AVAILABLE = False
 
 # Ensure clean torchvision shim to bypass Windows WDAC DLL issues on AppData
 def _ensure_torchvision_shim():
+    if not TORCH_AVAILABLE:
+        return
     if "torchvision" not in sys.modules or not hasattr(sys.modules.get("torchvision"), "ops"):
         def pytorch_nms(boxes, scores, iou_threshold):
             if boxes.numel() == 0:
@@ -56,8 +64,16 @@ _ensure_torchvision_shim()
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-except Exception:
+except (ImportError, ModuleNotFoundError):
     YOLO_AVAILABLE = False
+
+if TORCH_AVAILABLE and hasattr(torch, "inference_mode"):
+    TORCH_INFERENCE = torch.inference_mode
+elif TORCH_AVAILABLE and hasattr(torch, "no_grad"):
+    TORCH_INFERENCE = torch.no_grad
+else:
+    import contextlib
+    TORCH_INFERENCE = contextlib.nullcontext
 
 from utils.logger import logger
 
@@ -243,7 +259,8 @@ class AnimalDetector:
             if target_ids is not None:
                 kwargs["classes"] = target_ids
 
-            results = model(**kwargs)
+            with TORCH_INFERENCE():
+                results = model(**kwargs)
             self.last_latency_ms = int((time.time() - t0) * 1000)
 
             if results and len(results) > 0:

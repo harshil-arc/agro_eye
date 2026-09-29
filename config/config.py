@@ -72,6 +72,23 @@ DHT_TYPE = os.environ.get("DHT_TYPE", "DHT22")
 SOIL_MOISTURE_CHANNEL = int(os.environ.get("SOIL_CHANNEL", "0"))
 
 # ============================================================
+# CAMERA SERVO & PTZ CONFIGURATION (Raspberry Pi GPIO)
+# ============================================================
+# Default: GPIO 18 (Physical Pin 12, Hardware PWM0) for Pan / Rotation Servo
+SERVO_PAN_PIN = int(os.environ.get("SERVO_PAN_PIN", "18"))
+# Default: GPIO 13 (Physical Pin 33, Hardware PWM1) for Tilt / Pitch Servo
+SERVO_TILT_PIN = int(os.environ.get("SERVO_TILT_PIN", "13"))
+ENABLE_SERVO = os.environ.get("ENABLE_SERVO", "True").lower() in ("true", "1", "yes")
+
+# Auto-Sweep Rotation Boundaries (degrees)
+SERVO_AUTO_MIN_ANGLE = int(os.environ.get("SERVO_AUTO_MIN_ANGLE", "30"))
+SERVO_AUTO_MAX_ANGLE = int(os.environ.get("SERVO_AUTO_MAX_ANGLE", "150"))
+SERVO_AUTO_STEP_DEG = int(os.environ.get("SERVO_AUTO_STEP_DEG", "3"))
+SERVO_AUTO_INTERVAL = float(os.environ.get("SERVO_AUTO_INTERVAL", "0.12"))  # step period in seconds
+SERVO_AUTO_PAUSE_SEC = float(os.environ.get("SERVO_AUTO_PAUSE_SEC", "1.5")) # pause at limits for vision scan
+SERVO_CONTROL_PATH = "camera_control"
+
+# ============================================================
 # FIREBASE CONFIGURATION
 # ============================================================
 FIREBASE_CREDENTIALS_PATH = os.environ.get(
@@ -108,11 +125,12 @@ SYNC_INTERVAL = 10.0  # seconds to retry flushing offline buffer to Firebase
 # WEBRTC LIVE VIDEO STREAMING CONFIGURATION
 # ============================================================
 ENABLE_STREAMING = os.environ.get("ENABLE_STREAMING", "True").lower() in ("true", "1", "yes")
-STREAM_FPS = int(os.environ.get("STREAM_FPS", "20"))
+STREAM_FPS = int(os.environ.get("STREAM_FPS", "25"))
 STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
 STREAM_HEIGHT = int(os.environ.get("STREAM_HEIGHT", "480"))
 WEBRTC_DEVICE_ID = os.environ.get("WEBRTC_DEVICE_ID", "pi_agroeye_01")
 WEBRTC_SESSION_PATH = f"webrtc_sessions/{WEBRTC_DEVICE_ID}"
+
 
 # STUN & TURN ICE Servers for NAT/Firewall Traversal (Pi -> Internet -> Farmer App)
 STUN_SERVERS = [

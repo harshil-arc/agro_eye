@@ -109,9 +109,48 @@ class RealtimeDatabaseManager:
             except Exception as e:
                 logger.debug(f"Admin SDK push_disease_event failed: {e}. Falling back to REST.")
 
-        # 2. Direct REST API Fallback
-        if self._rest_post("disease_alerts", event_data):
-            logger.info(f"Disease alert pushed to Firebase Realtime Database (REST): {event_data.get('disease_name')}")
-            return True
-        return False
+    def _rest_get(self, endpoint: str) -> Optional[Any]:
+        """Fetches data via REST GET."""
+        if not self.db_url:
+            return None
+        url = f"{self.db_url}/{endpoint.lstrip('/')}.json"
+        try:
+            resp = self.session.get(url, timeout=5.0)
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            logger.debug(f"Firebase REST GET error for /{endpoint}: {e}")
+        return None
+
+    def get_camera_control(self) -> Optional[Dict[str, Any]]:
+        """Fetches current /camera_control state from Firebase."""
+        # 1. Try Firebase Admin SDK if active
+        if self.fb.is_ready or self.fb.initialize():
+            try:
+                from firebase_admin import db
+                ref = db.reference("camera_control")
+                val = ref.get()
+                if val and isinstance(val, dict):
+                    return val
+            except Exception as e:
+                logger.debug(f"Admin SDK get_camera_control failed: {e}. Falling back to REST.")
+
+        # 2. REST API Fallback
+        res = self._rest_get("camera_control")
+        return res if isinstance(res, dict) else None
+
+    def update_camera_control(self, data: Dict[str, Any]) -> bool:
+        """Pushes updated camera / servo state to /camera_control."""
+        # 1. Try Firebase Admin SDK if active
+        if self.fb.is_ready or self.fb.initialize():
+            try:
+                from firebase_admin import db
+                ref = db.reference("camera_control")
+                ref.update(data)
+                return True
+            except Exception as e:
+                logger.debug(f"Admin SDK update_camera_control failed: {e}. Falling back to REST.")
+
+        # 2. REST API Fallback
+        return self._rest_put("camera_control", data)
 

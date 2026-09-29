@@ -67,8 +67,42 @@ class StorageUploader:
             return None
 
     def _upload_to_cloud_host(self, local_image_path: str) -> Optional[str]:
-        """Uploads snapshot to cloud image host and returns direct clickable https://...jpg URL."""
-        # 1. Try FreeImage.host API
+        """
+        Uploads snapshot to high-speed cloud image host and returns direct, clean viewer URL
+        (e.g. https://freeimage.host/i/<id>) that opens smoothly in any browser without 403 blocks.
+        """
+        # 1. Primary: FreeImage.host API (multipart file upload)
+        try:
+            with open(local_image_path, "rb") as f:
+                resp = requests.post(
+                    "https://freeimage.host/api/1/upload",
+                    data={
+                        "key": "6d207e02198a847aa98d0a2a901485a5",
+                        "action": "upload",
+                        "format": "json"
+                    },
+                    files={"source": f},
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                    timeout=10
+                )
+            if resp.status_code == 200:
+                data = resp.json()
+                img_data = data.get("image", {})
+                # Note: iili.io blocks direct hotlinking on fresh browser sessions with a 403 page.
+                # Returning url_viewer or url_short (https://freeimage.host/i/<id>) opens the image 100% cleanly!
+                clean_url = (
+                    img_data.get("url_viewer") or
+                    img_data.get("url_short") or
+                    img_data.get("url_seo") or
+                    img_data.get("url")
+                )
+                if clean_url:
+                    logger.info(f"Photo uploaded to cloud host: {clean_url}")
+                    return clean_url
+        except Exception as e:
+            logger.debug(f"FreeImage primary upload error: {e}")
+
+        # 2. Fallback: FreeImage base64 upload
         try:
             with open(local_image_path, "rb") as f:
                 b64_data = base64.b64encode(f.read()).decode("utf-8")
@@ -80,36 +114,27 @@ class StorageUploader:
                     "source": b64_data,
                     "format": "json"
                 },
-                timeout=8
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                timeout=10
             )
             if resp.status_code == 200:
-                img_url = resp.json().get("image", {}).get("url")
-                if img_url:
-                    logger.info(f"Photo uploaded to cloud host: {img_url}")
-                    return img_url
+                img_data = resp.json().get("image", {})
+                clean_url = img_data.get("url_viewer") or img_data.get("url_short") or img_data.get("url")
+                if clean_url:
+                    logger.info(f"Photo uploaded to cloud host (fallback b64): {clean_url}")
+                    return clean_url
         except Exception as e:
-            logger.debug(f"FreeImage upload error: {e}")
+            logger.debug(f"FreeImage b64 upload error: {e}")
 
-        # 2. Fallback to Catbox.moe
+        # 3. Fallback: tmpfiles.org
         try:
             with open(local_image_path, "rb") as f:
                 resp = requests.post(
-                    "https://catbox.moe/user/api.php",
-                    data={"reqtype": "fileupload"},
-                    files={"fileToUpload": f},
-                    timeout=8
+                    "https://tmpfiles.org/api/v1/upload",
+                    files={"file": f},
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                    timeout=10
                 )
-            if resp.status_code == 200 and resp.text.startswith("http"):
-                url = resp.text.strip()
-                logger.info(f"Photo uploaded to cloud host (catbox): {url}")
-                return url
-        except Exception as e:
-            logger.debug(f"Catbox upload error: {e}")
-
-        # 3. Fallback to tmpfiles.org
-        try:
-            with open(local_image_path, "rb") as f:
-                resp = requests.post("https://tmpfiles.org/api/v1/upload", files={"file": f}, timeout=8)
             if resp.status_code == 200:
                 res_data = resp.json()
                 if res_data.get("status") == "success":

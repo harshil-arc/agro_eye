@@ -62,6 +62,9 @@ class WebRTCStreamer:
 
     async def _handle_offer(self, offer_dict: Dict[str, Any]):
         """Processes incoming SDP offer from the Farmer's App and returns an SDP answer."""
+        if not self.running:
+            return
+
         offer_time = offer_dict.get("timestamp", 0)
         if offer_time <= self.last_offer_timestamp:
             return
@@ -77,6 +80,9 @@ class WebRTCStreamer:
             except Exception:
                 pass
             self.pc = None
+
+        if not self.running:
+            return
 
         # Create new RTCPeerConnection with STUN / TURN configuration
         config = self._build_rtc_config()

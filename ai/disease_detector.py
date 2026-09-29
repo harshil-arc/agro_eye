@@ -13,12 +13,27 @@ warnings.filterwarnings("ignore", category=UserWarning)
 import cv2
 import numpy as np
 
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    torch = None
+    TORCH_AVAILABLE = False
+
 # Ultralytics YOLO import (100% offline)
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-except Exception:
+except (ImportError, ModuleNotFoundError):
     YOLO_AVAILABLE = False
+
+if TORCH_AVAILABLE and hasattr(torch, "inference_mode"):
+    TORCH_INFERENCE = torch.inference_mode
+elif TORCH_AVAILABLE and hasattr(torch, "no_grad"):
+    TORCH_INFERENCE = torch.no_grad
+else:
+    import contextlib
+    TORCH_INFERENCE = contextlib.nullcontext
 
 from utils.logger import logger
 
@@ -326,71 +341,72 @@ class LocalPlantDetector:
         if p_model is None or frame is None or frame.size == 0 or np.std(frame) < 14.0:
             return plant_boxes, target_roi
 
-        # 1. Scale 1: Scan Center Target ROI at high resolution
-        roi_img = frame[ry1:ry2, rx1:rx2]
-        if roi_img.size > 0 and self._is_plant_foliage(roi_img):
-            try:
-                results_roi = p_model(roi_img, verbose=False, conf=self.conf_thresh, imgsz=640)
-                if results_roi and len(results_roi) > 0:
-                    for box in results_roi[0].boxes:
-                        cls_id = int(box.cls[0].item())
-                        name = results_roi[0].names.get(cls_id, f"Class_{cls_id}")
-                        conf = float(box.conf[0].item())
-                        bx1, by1, bx2, by2 = map(int, box.xyxy[0].cpu().numpy())
-                        
-                        # Map ROI local coordinates to Full Frame coordinates
-                        fx1 = max(0, rx1 + bx1)
-                        fy1 = max(0, ry1 + by1)
-                        fw = min(w - fx1, bx2 - bx1)
-                        fh = min(h - fy1, by2 - by1)
+        with TORCH_INFERENCE():
+            # 1. Scale 1: Scan Center Target ROI at high resolution
+            roi_img = frame[ry1:ry2, rx1:rx2]
+            if roi_img.size > 0 and self._is_plant_foliage(roi_img):
+                try:
+                    results_roi = p_model(roi_img, verbose=False, conf=self.conf_thresh, imgsz=640)
+                    if results_roi and len(results_roi) > 0:
+                        for box in results_roi[0].boxes:
+                            cls_id = int(box.cls[0].item())
+                            name = results_roi[0].names.get(cls_id, f"Class_{cls_id}")
+                            conf = float(box.conf[0].item())
+                            bx1, by1, bx2, by2 = map(int, box.xyxy[0].cpu().numpy())
+                            
+                            # Map ROI local coordinates to Full Frame coordinates
+                            fx1 = max(0, rx1 + bx1)
+                            fy1 = max(0, ry1 + by1)
+                            fw = min(w - fx1, bx2 - bx1)
+                            fh = min(h - fy1, by2 - by1)
 
-                        if fw > 16 and fh > 16:
-                            box_crop = frame[fy1:fy1+fh, fx1:fx1+fw]
-                            # Foliage verification gate on individual bounding box
-                            if self._is_plant_foliage(box_crop):
-                                info = lookup_agronomic_info(name, conf)
-                                plant_boxes.append({
-                                    "x": fx1, "y": fy1, "w": fw, "h": fh,
-                                    "conf": conf,
-                                    "display_conf": info["display_confidence"],
-                                    "label": info["clean_name"],
-                                    "raw_label": name,
-                                    "crop": info["crop"],
-                                    "is_diseased": True,
-                                    "source": "Center Scanner"
-                                })
-            except Exception:
-                pass
+                            if fw > 16 and fh > 16:
+                                box_crop = frame[fy1:fy1+fh, fx1:fx1+fw]
+                                # Foliage verification gate on individual bounding box
+                                if self._is_plant_foliage(box_crop):
+                                    info = lookup_agronomic_info(name, conf)
+                                    plant_boxes.append({
+                                        "x": fx1, "y": fy1, "w": fw, "h": fh,
+                                        "conf": conf,
+                                        "display_conf": info["display_confidence"],
+                                        "label": info["clean_name"],
+                                        "raw_label": name,
+                                        "crop": info["crop"],
+                                        "is_diseased": True,
+                                        "source": "Center Scanner"
+                                    })
+                except Exception:
+                    pass
 
-        # 2. Scale 2: If no box found in Center ROI and frame has foliage, scan full frame
-        if len(plant_boxes) == 0 and self._is_plant_foliage(frame):
-            try:
-                results_full = p_model(frame, verbose=False, conf=self.conf_thresh, imgsz=640)
-                if results_full and len(results_full) > 0:
-                    for box in results_full[0].boxes:
-                        cls_id = int(box.cls[0].item())
-                        name = results_full[0].names.get(cls_id, f"Class_{cls_id}")
-                        conf = float(box.conf[0].item())
-                        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
-                        w_box = max(4, x2 - x1)
-                        h_box = max(4, y2 - y1)
+            # 2. Scale 2: If no box found in Center ROI and frame has foliage, scan full frame
+            if len(plant_boxes) == 0 and self._is_plant_foliage(frame):
+                try:
+                    results_full = p_model(frame, verbose=False, conf=self.conf_thresh, imgsz=640)
+                    if results_full and len(results_full) > 0:
+                        for box in results_full[0].boxes:
+                            cls_id = int(box.cls[0].item())
+                            name = results_full[0].names.get(cls_id, f"Class_{cls_id}")
+                            conf = float(box.conf[0].item())
+                            x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                            w_box = max(4, x2 - x1)
+                            h_box = max(4, y2 - y1)
 
-                        if w_box > 16 and h_box > 16:
-                            box_crop = frame[y1:y1+h_box, x1:x1+w_box]
-                            if self._is_plant_foliage(box_crop):
-                                info = lookup_agronomic_info(name, conf)
-                                plant_boxes.append({
-                                    "x": x1, "y": y1, "w": w_box, "h": h_box,
-                                    "conf": conf,
-                                    "display_conf": info["display_confidence"],
-                                    "label": info["clean_name"],
-                                    "raw_label": name,
-                                    "crop": info["crop"],
-                                    "is_diseased": True,
-                                    "source": "Full Frame"
-                                })
-            except Exception:
-                pass
+                            if w_box > 16 and h_box > 16:
+                                box_crop = frame[y1:y1+h_box, x1:x1+w_box]
+                                if self._is_plant_foliage(box_crop):
+                                    info = lookup_agronomic_info(name, conf)
+                                    plant_boxes.append({
+                                        "x": x1, "y": y1, "w": w_box, "h": h_box,
+                                        "conf": conf,
+                                        "display_conf": info["display_confidence"],
+                                        "label": info["clean_name"],
+                                        "raw_label": name,
+                                        "crop": info["crop"],
+                                        "is_diseased": True,
+                                        "source": "Full Frame"
+                                    })
+                except Exception:
+                    pass
 
         # Non-Maximum Suppression: filter out overlapping boxes and keep top detections
         if len(plant_boxes) > 1:
@@ -426,8 +442,8 @@ class PlantPathologyHUD:
         fps: float,
         latency_ms: int,
         conf_thresh: float,
-        detection_data: Dict[str, Any],
-        local_yolo_boxes: List[dict],
+        detection_data: Optional[Dict[str, Any]],
+        local_yolo_boxes: Optional[List[dict]],
         target_roi: Tuple[int, int, int, int],
         animal_boxes: Optional[List[dict]] = None,
         animal_result: Optional[Any] = None,
@@ -437,6 +453,8 @@ class PlantPathologyHUD:
     ) -> np.ndarray:
         h, w = frame.shape[:2]
         canvas = frame.copy()
+        detection_data = detection_data or {}
+        local_yolo_boxes = local_yolo_boxes or []
         animal_boxes = animal_boxes or []
 
         # --- 1. DRAW TARGET SCAN RETICLE IF NO PLANT DISEASE IN VIEW ---
