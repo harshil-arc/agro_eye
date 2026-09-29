@@ -182,23 +182,58 @@ class AnimalDetector:
             self._load_model()
 
     def _load_model(self):
-        """Discovers and initializes animal model weights."""
+        """Discovers and initializes animal model weights across Windows, Linux, and Raspberry Pi."""
         candidates = []
         if self.model_path:
-            candidates.append(self.model_path)
+            candidates.append(Path(self.model_path))
         
-        # Standard candidate paths from D:\animal_detection_model and local models
+        base_dir = Path(__file__).resolve().parent.parent
+
         candidates.extend([
-            r"D:\animal_detection_model\yolo11m.pt",
-            r"D:\animal_detection_model\best.pt",
-            r"D:\animal_detection_model\yolov8s-worldv2.pt",
-            r"D:\animal_detection_model\yolov8m-worldv2.pt",
-            "models/yolo11m.pt",
-            "models/animal_best.pt"
+            # 1. Project local models directory
+            base_dir / "models" / "yolo11m.pt",
+            base_dir / "models" / "best.pt",
+            base_dir / "models" / "animal_best.pt",
+            base_dir / "models" / "animal_model.pt",
+            base_dir / "models" / "yolo11n.pt",
+            base_dir / "models" / "yolov8n.pt",
+
+            # 2. Sibling / parent directories
+            base_dir.parent / "animal_detection_model" / "yolo11m.pt",
+            base_dir.parent / "animal_detection_model" / "best.pt",
+            base_dir.parent / "animal_detection_model" / "yolov8s-worldv2.pt",
+            base_dir.parent / "animal_detection_model" / "yolov8m-worldv2.pt",
+
+            # 3. Pi / Linux home paths
+            Path.home() / "PS180_2026" / "animal_detection_model" / "yolo11m.pt",
+            Path.home() / "PS180_2026" / "animal_detection_model" / "best.pt",
+            Path.home() / "animal_detection_model" / "yolo11m.pt",
+            Path.home() / "animal_detection_model" / "best.pt",
+            Path("/home/gullu/PS180_2026/animal_detection_model/yolo11m.pt"),
+            Path("/home/gullu/PS180_2026/animal_detection_model/best.pt"),
+
+            # 4. Windows absolute paths
+            Path(r"D:\animal_detection_model\yolo11m.pt"),
+            Path(r"D:\animal_detection_model\best.pt"),
+            Path(r"D:\animal_detection_model\yolov8s-worldv2.pt"),
+            Path(r"D:\animal_detection_model\yolov8m-worldv2.pt"),
+            Path(r"C:\animal_detection_model\yolo11m.pt"),
+
+            # 5. Current working directory
+            Path("models/yolo11m.pt"),
+            Path("models/best.pt"),
+            Path("models/animal_best.pt"),
+            Path("yolo11m.pt"),
+            Path("best.pt"),
         ])
 
-        for p in candidates:
-            cand_path = Path(p)
+        seen_paths = set()
+        for cand_path in candidates:
+            cand_resolved = str(cand_path)
+            if cand_resolved in seen_paths:
+                continue
+            seen_paths.add(cand_resolved)
+
             if cand_path.exists():
                 try:
                     loaded_m = YOLO(str(cand_path))

@@ -104,6 +104,8 @@ class PlantDetectionSystem:
         self.latest_animal_result: AnimalDetectionResult = AnimalDetectionResult()
         self.ai_lock = threading.Lock()
 
+        is_display_available = (os.name == "nt") or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        self.gui_available = ENABLE_GUI_DISPLAY and is_display_available
 
         self.last_sensor_time: float = 0.0
         self.latest_sensor_data: dict = {}
@@ -481,30 +483,35 @@ class PlantDetectionSystem:
                 self.streamer.update_frame(annotated)
 
                 # GUI Display Handling (if desktop/monitor attached)
-                if ENABLE_GUI_DISPLAY:
-                    cv2.imshow("AgroEye - Plant Disease & Animal Intrusion Monitor", annotated)
-                    key = cv2.waitKey(1) & 0xFF
-                    if key in [ord('q'), ord('Q'), 27]:
-                        logger.info("Quit command received.")
-                        break
-                    elif key in [ord('h'), ord('H')]:
-                        self.hud_expanded = not self.hud_expanded
-                    elif key in [ord('s'), ord('S')]:
-                        self.camera.save_snapshot(annotated, prefix="manual_report")
-                    elif key in [ord('c'), ord('C')]:
-                        self.camera.switch_camera()
-                    elif key in [ord('a'), ord('A')]:
-                        self.enable_animal_ai = not self.enable_animal_ai
-                        status_str = "ENABLED" if self.enable_animal_ai else "DISABLED"
-                        logger.info(f"Animal Intrusion AI is now: {status_str}")
-                    elif key in [ord('+'), ord('=')]:
-                        self.detector.adjust_threshold(+0.02)
-                        if self.enable_animal_ai:
-                            self.animal_detector.adjust_threshold(+0.05)
-                    elif key in [ord('-'), ord('_')]:
-                        self.detector.adjust_threshold(-0.02)
-                        if self.enable_animal_ai:
-                            self.animal_detector.adjust_threshold(-0.05)
+                if self.gui_available:
+                    try:
+                        cv2.imshow("AgroEye - Plant Disease & Animal Intrusion Monitor", annotated)
+                        key = cv2.waitKey(1) & 0xFF
+                        if key in [ord('q'), ord('Q'), 27]:
+                            logger.info("Quit command received.")
+                            break
+                        elif key in [ord('h'), ord('H')]:
+                            self.hud_expanded = not self.hud_expanded
+                        elif key in [ord('s'), ord('S')]:
+                            self.camera.save_snapshot(annotated, prefix="manual_report")
+                        elif key in [ord('c'), ord('C')]:
+                            self.camera.switch_camera()
+                        elif key in [ord('a'), ord('A')]:
+                            self.enable_animal_ai = not self.enable_animal_ai
+                            status_str = "ENABLED" if self.enable_animal_ai else "DISABLED"
+                            logger.info(f"Animal Intrusion AI is now: {status_str}")
+                        elif key in [ord('+'), ord('=')]:
+                            self.detector.adjust_threshold(+0.02)
+                            if self.enable_animal_ai:
+                                self.animal_detector.adjust_threshold(+0.05)
+                        elif key in [ord('-'), ord('_')]:
+                            self.detector.adjust_threshold(-0.02)
+                            if self.enable_animal_ai:
+                                self.animal_detector.adjust_threshold(-0.05)
+                    except (cv2.error, Exception) as e:
+                        logger.warning(f"GUI display not available ({e}). Running seamlessly in headless WebRTC streaming mode.")
+                        self.gui_available = False
+                        time.sleep(0.005)
                 else:
                     time.sleep(0.005)
 
@@ -533,7 +540,7 @@ class PlantDetectionSystem:
         self.sync_worker.stop()
         self.lora.lora.close()
 
-        if ENABLE_GUI_DISPLAY:
+        if self.gui_available:
             try:
                 cv2.destroyAllWindows()
             except Exception:
