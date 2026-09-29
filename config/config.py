@@ -101,6 +101,7 @@ FIREBASE_STORAGE_BUCKET = os.environ.get(
     "FIREBASE_STORAGE_BUCKET", 
     "sample-629de.appspot.com"
 )
+MAX_FIREBASE_SNAPSHOTS = int(os.environ.get("MAX_FIREBASE_SNAPSHOTS", "200"))
 
 # ============================================================
 # LORA MODULE CONFIGURATION (Raspberry Pi 5 loralibPi5)

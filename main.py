@@ -404,11 +404,55 @@ class PlantDetectionSystem:
                 }
 
                 self.rtdb.push_disease_event(animal_payload)
+                self.rtdb.push_snapshot(animal_payload)
                 logger.info(f"Animal intrusion alert for '{top_animal}' sent to Firebase: {photo_url}")
             except Exception as e:
                 logger.error(f"Failed to sync animal intrusion event to Firebase: {e}")
 
         self.upload_executor.submit(upload_animal_sync)
+
+    def _handle_manual_snapshot(self, annotated_frame: np.ndarray):
+        """
+        Triggered when farmer manually captures a photo ('s' key / app command):
+        1. Saves snapshot locally
+        2. Uploads to Cloud Hosting / Firebase Storage
+        3. Pushes metadata with photo_url to Firebase /snapshots (capped at 200 items FIFO)
+        4. Updates live_status with latest photo URL
+        """
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        dt_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        snapshot_path = self.camera.save_snapshot(annotated_frame, prefix="manual_snapshot")
+        logger.info(f"Manual snapshot saved locally: {snapshot_path}")
+
+        def upload_manual_sync():
+            try:
+                photo_url = self.storage.upload_image(
+                    local_image_path=snapshot_path,
+                    metadata={"type": "manual_snapshot", "timestamp": now_iso}
+                )
+
+                payload = {
+                    "timestamp": now_iso,
+                    "datetime": dt_str,
+                    "type": "manual_snapshot",
+                    "disease_name": self.latest_result.top_class if self.latest_result.has_disease else "Healthy Foliage",
+                    "confidence": round(self.latest_result.confidence, 4),
+                    "severity": self.latest_result.severity,
+                    "sensors": self.latest_sensor_data,
+                    "photo_url": photo_url or ""
+                }
+
+                self.rtdb.push_snapshot(payload)
+                self.rtdb.update_live_status({
+                    "last_updated": dt_str,
+                    "latest_photo_url": photo_url or "",
+                    "sensors": self.latest_sensor_data
+                })
+                logger.info(f"Manual snapshot successfully sent to Firebase /snapshots: {photo_url}")
+            except Exception as e:
+                logger.error(f"Failed to upload manual snapshot to Firebase: {e}")
+
+        self.upload_executor.submit(upload_manual_sync)
 
     def start(self):
         """Starts the main system pipeline with high-speed 30 FPS streaming and decoupled AI inference."""
@@ -521,7 +565,7 @@ class PlantDetectionSystem:
                         elif key in [ord('h'), ord('H')]:
                             self.hud_expanded = not self.hud_expanded
                         elif key in [ord('s'), ord('S')]:
-                            self.camera.save_snapshot(annotated, prefix="manual_report")
+                            self._handle_manual_snapshot(annotated)
                         elif key in [ord('c'), ord('C')]:
                             self.camera.switch_camera()
                         elif key in [ord('a'), ord('A')]:
