@@ -122,7 +122,6 @@ class ServoController:
             self.backend = "gpiozero"
             self.hardware_active = True
             logger.info(f"Servo Hardware active via gpiozero (Pan: GPIO {self.pan_pin} [Physical Pin 12]).")
-            self._write_hardware_angle(90.0)
             return
         except Exception as e:
             logger.debug(f"gpiozero servo init skipped: {e}")
@@ -139,7 +138,6 @@ class ServoController:
                     self.backend = "lgpio"
                     self.hardware_active = True
                     logger.info(f"Servo Hardware active via lgpio chip {chip_num} (Pan: GPIO {self.pan_pin} [Physical Pin 12]).")
-                    self._write_hardware_angle(90.0)
                     return
                 except Exception:
                     continue
@@ -157,7 +155,6 @@ class ServoController:
             self.backend = "rpi_gpio"
             self.hardware_active = True
             logger.info(f"Servo Hardware active via RPi.GPIO (Pan: GPIO {self.pan_pin} [Physical Pin 12]).")
-            self._write_hardware_angle(90.0)
             return
         except Exception as e:
             logger.debug(f"RPi.GPIO servo init skipped: {e}")
@@ -172,8 +169,11 @@ class ServoController:
         clamped = max(0.0, min(180.0, float(angle)))
         return 2.5 + (clamped / 180.0) * 10.0
 
-    def _write_hardware_angle(self, pan_angle: float):
-        """Applies PWM signal to the physical servo pin."""
+    def _write_hardware_angle(self, pan_angle: float, release_after: bool = False):
+        """
+        Applies PWM signal to the physical servo pin.
+        Optionally releases holding current after positioning to prevent Pi brownouts.
+        """
         if not self.hardware_active:
             return
 
@@ -181,15 +181,24 @@ class ServoController:
         try:
             if self.backend == "gpiozero" and self.gpiozero_servo:
                 self.gpiozero_servo.angle = clamped
+                if release_after:
+                    time.sleep(0.08)
+                    self.gpiozero_servo.detach()
 
             elif self.backend == "lgpio" and self.lgpio_handle is not None:
                 import lgpio
                 pulse_us = int(500 + (clamped / 180.0) * 1900)  # 500us to 2400us
                 lgpio.tx_servo(self.lgpio_handle, self.pan_pin, pulse_us, 50)
+                if release_after:
+                    time.sleep(0.08)
+                    lgpio.tx_servo(self.lgpio_handle, self.pan_pin, 0, 50)
 
             elif self.backend == "rpi_gpio" and self.rpi_pwm:
                 duty = self._angle_to_duty(clamped)
                 self.rpi_pwm.ChangeDutyCycle(duty)
+                if release_after:
+                    time.sleep(0.08)
+                    self.rpi_pwm.ChangeDutyCycle(0)
 
         except Exception as e:
             logger.debug(f"Hardware servo PWM write error: {e}")
@@ -318,12 +327,19 @@ class ServoController:
             time.sleep(0.3)  # 300ms poll interval
 
     def start(self):
-        """Starts the servo rotation and Firebase control watchdog threads."""
+        """Starts the servo rotation and Firebase control watchdog threads with gentle soft-start."""
         if not self.enabled:
             logger.info("Servo Controller is disabled in configuration.")
             return
 
         self.running = True
+
+        # Gentle soft-start to neutral 90 degrees
+        if self.hardware_active:
+            try:
+                self._write_hardware_angle(90.0, release_after=True)
+            except Exception:
+                pass
 
         # 1. Start Auto Sweep / Position Worker Thread
         self.servo_thread = threading.Thread(target=self._servo_worker_loop, daemon=True)
