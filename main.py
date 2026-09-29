@@ -1,6 +1,8 @@
 import os
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
+if os.name != "nt" and "DISPLAY" not in os.environ:
+    os.environ["DISPLAY"] = ":0"
 
 import sys
 import time
@@ -111,11 +113,11 @@ class PlantDetectionSystem:
         self.latest_sensor_data: dict = {}
         self.hud_expanded: bool = True
         self.last_disease_alert_time: float = 0.0
-        self.disease_alert_cooldown: float = 4.0
+        self.disease_alert_cooldown: float = 12.0
         self.consecutive_disease_frames: int = 0
 
         self.last_animal_alert_time: float = 0.0
-        self.animal_alert_cooldown: float = 4.0
+        self.animal_alert_cooldown: float = 10.0
         self.consecutive_animal_frames: int = 0
 
     def _ai_worker_loop(self):
@@ -150,16 +152,16 @@ class PlantDetectionSystem:
                     self.latest_det_data = det_data
                     self.latest_animal_result = animal_result
 
-                # 3. Handle Disease Alerts
-                if plant_result.has_disease:
+                # 3. Handle Disease Alerts (Require >= 3 consecutive frames with confidence >= threshold)
+                if plant_result.has_disease and plant_result.confidence >= self.detector.confidence_threshold:
                     self.consecutive_disease_frames += 1
-                    if self.consecutive_disease_frames >= 2:
-                        self._handle_disease_event(frame, plant_result)
+                    if self.consecutive_disease_frames >= 3:
+                        self._handle_disease_event(frame, plant_result, plant_boxes, det_data)
                 else:
                     self.consecutive_disease_frames = 0
 
                 # 4. Handle Wildlife / Animal Intrusion Alerts
-                if animal_result.has_animals:
+                if animal_result.has_animals and animal_result.top_confidence >= self.animal_detector.conf_thresh:
                     self.consecutive_animal_frames += 1
                     if self.consecutive_animal_frames >= 2:
                         self._handle_animal_event(frame, animal_result)
@@ -234,10 +236,10 @@ class PlantDetectionSystem:
 
             time.sleep(SENSOR_POLL_INTERVAL)
 
-    def _handle_disease_event(self, frame: np.ndarray, result: DetectionResult):
+    def _handle_disease_event(self, frame: np.ndarray, result: DetectionResult, plant_boxes: list = None, det_data: dict = None):
         """
-        Triggered when plant disease is detected:
-        1. Saves automatic snapshot locally
+        Triggered when plant disease is confirmed:
+        1. Generates and saves an annotated diagnostic snapshot with disease bounding boxes & remedy tags
         2. Transmits instant Emergency Alert over LoRa to ESP32 OLED Receiver
         3. Records event in local SQLite (offline persistence)
         4. Uploads snapshot to Firebase Storage & pushes record to Firebase RTDB (if online)
@@ -251,15 +253,27 @@ class PlantDetectionSystem:
         disp_conf = getattr(result, "display_confidence", int(result.confidence * 100))
         logger.warning(f"🚨 DISEASE DETECTED: {result.top_class} (Match: {disp_conf}%)")
 
-        # 1. Save Automatic Snapshot locally
-        clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', result.top_class)
-        snapshot_path = self.camera.save_snapshot(frame, prefix=f"disease_{clean_name}")
+        # 1. Render clear diagnostic overlay on snapshot for cloud and local archive
+        annotated_snapshot = frame.copy()
+        if det_data is not None and plant_boxes:
+            annotated_snapshot = self.detector.draw_hud(
+                frame=annotated_snapshot,
+                fps=30.0,
+                detection_data=det_data,
+                local_yolo_boxes=plant_boxes,
+                hud_expanded=True,
+                sensor_overlay_text=None
+            )
 
-        # 2. Transmit over LoRa SX127x to ESP32 OLED receiver
+        # 2. Save Automatic Snapshot locally
+        clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', result.top_class)
+        snapshot_path = self.camera.save_snapshot(annotated_snapshot, prefix=f"disease_{clean_name}")
+
+        # 3. Transmit over LoRa SX127x to ESP32 OLED receiver
         self.lora.update_latest_disease(result.top_class, float(disp_conf))
         self.lora.trigger_disease_alert(result.top_class, float(disp_conf))
 
-        # 3. Log event into local SQLite database (persists in case of no internet)
+        # 4. Log event into local SQLite database (persists in case of no internet)
         now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ")
         dt_str = time.strftime("%Y-%m-%d %H:%M:%S")
         event_id = self.repo.insert_disease_event(
@@ -270,7 +284,7 @@ class PlantDetectionSystem:
             snapshot_path=snapshot_path
         )
 
-        # 4. Asynchronously upload to Firebase if network is available
+        # 5. Asynchronously upload to Firebase if network is available
         def upload_and_sync():
             try:
                 photo_url = self.storage.upload_image(
@@ -317,7 +331,7 @@ class PlantDetectionSystem:
     def _handle_animal_event(self, frame: np.ndarray, animal_result: AnimalDetectionResult):
         """
         Triggered when wildlife or farm animal intrusion is detected:
-        1. Saves automatic snapshot locally
+        1. Saves annotated snapshot locally with animal bounding boxes
         2. Transmits instant Emergency Intrusion Alert over LoRa
         3. Asynchronously uploads snapshot to Firebase Storage & RTDB
         """
@@ -334,9 +348,23 @@ class PlantDetectionSystem:
 
         logger.warning(f"🐾 ANIMAL DETECTED: {top_animal} (Count: {total}, Match: {conf}%, Status: {threat_level})")
 
-        # 1. Save Automatic Snapshot locally
+        # 1. Render animal intrusion bounding box overlay on snapshot
+        annotated_snapshot = frame.copy()
+        if animal_result.boxes:
+            dummy_det = {"has_disease": False, "disease_name": "None", "plant_name": "Wildlife Intrusion"}
+            annotated_snapshot = self.detector.draw_hud(
+                frame=annotated_snapshot,
+                fps=30.0,
+                detection_data=dummy_det,
+                local_yolo_boxes=[],
+                animal_boxes=animal_result.boxes,
+                animal_result=animal_result,
+                hud_expanded=True
+            )
+
+        # 2. Save Automatic Snapshot locally
         clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', top_animal)
-        snapshot_path = self.camera.save_snapshot(frame, prefix=f"animal_{clean_name}")
+        snapshot_path = self.camera.save_snapshot(annotated_snapshot, prefix=f"animal_{clean_name}")
 
         # 2. Transmit over LoRa SX127x
         self.lora.trigger_animal_alert(

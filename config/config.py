@@ -42,11 +42,11 @@ ROI_SIZE = 360
 
 # 100% Offline YOLOv8 Plant Disease Model
 YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH", str(BASE_DIR / "models" / "disease_model.pt"))
-CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.15"))
+CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.50"))
 
 # Animal & Wildlife Detection Model (D:\animal_detection_model)
 ANIMAL_MODEL_PATH = os.environ.get("ANIMAL_MODEL_PATH", r"D:\animal_detection_model\yolo11m.pt")
-ANIMAL_CONF_THRESHOLD = float(os.environ.get("ANIMAL_CONF_THRESHOLD", "0.35"))
+ANIMAL_CONF_THRESHOLD = float(os.environ.get("ANIMAL_CONF_THRESHOLD", "0.45"))
 ENABLE_ANIMAL_DETECTION = os.environ.get("ENABLE_ANIMAL_DETECTION", "True").lower() in ("true", "1", "yes")
 
 # ============================================================

@@ -229,7 +229,7 @@ def lookup_agronomic_info(raw_class_name: str, confidence: float = 0.0) -> Dict[
 
 class LocalPlantDetector:
     """Multi-Scale 100% Offline YOLOv8 Plant Disease Inference Engine."""
-    def __init__(self, model_path: Optional[str] = None, conf_thresh: float = 0.15):
+    def __init__(self, model_path: Optional[str] = None, conf_thresh: float = 0.50):
         self.conf_thresh = conf_thresh
         self.model_path = model_path
         self.plant_model = None
@@ -279,7 +279,7 @@ class LocalPlantDetector:
         2. Measures Excess Green Index (ExG = 2G - R - B) to ensure chlorophyll reflection.
         3. Checks leaf green, chlorotic yellow, and necrotic lesion HSV spectrum.
         """
-        if crop is None or crop.size == 0 or crop.shape[0] < 20 or crop.shape[1] < 20:
+        if crop is None or crop.size == 0 or crop.shape[0] < 16 or crop.shape[1] < 16:
             return False
 
         h, w = crop.shape[:2]
@@ -289,6 +289,8 @@ class LocalPlantDetector:
         ycrcb = cv2.cvtColor(crop, cv2.COLOR_BGR2YCrCb)
         skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
         skin_ratio = np.count_nonzero(skin_mask) / total_pixels
+        if skin_ratio > 0.25:
+            return False
 
         # 2. Excess Green Botanical Index: ExG = 2*G - R - B
         b, g, r = cv2.split(crop.astype(np.float32))
@@ -296,36 +298,30 @@ class LocalPlantDetector:
 
         # 3. True Plant Chlorophyll Spectrum in HSV
         hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        # Leaf green foliage: Hue 30 to 90, Sat >= 35, Val >= 35
-        green_mask = cv2.inRange(hsv, np.array([30, 35, 35]), np.array([90, 255, 255]))
-        # Chlorotic / yellow diseased leaf: Hue 20 to 30, Sat >= 50, Val >= 45
-        yellow_mask = cv2.inRange(hsv, np.array([20, 50, 45]), np.array([30, 255, 255]))
-        # Necrotic brown leaf lesion: Hue 10 to 20, Sat >= 40, Val in [30, 200]
-        brown_mask = cv2.inRange(hsv, np.array([10, 40, 30]), np.array([20, 255, 200]))
+        # Leaf green foliage: Hue 28 to 90, Sat >= 30, Val >= 30
+        green_mask = cv2.inRange(hsv, np.array([28, 30, 30]), np.array([90, 255, 255]))
+        # Chlorotic / yellow diseased leaf: Hue 18 to 28, Sat >= 45, Val >= 40
+        yellow_mask = cv2.inRange(hsv, np.array([18, 45, 40]), np.array([28, 255, 255]))
+        # Necrotic brown leaf lesion: Hue 8 to 18, Sat >= 35, Val in [25, 210]
+        brown_mask = cv2.inRange(hsv, np.array([8, 35, 25]), np.array([18, 255, 210]))
 
-        plant_mask = (exg > 5) & ((green_mask > 0) | (yellow_mask > 0) | (brown_mask > 0))
+        plant_mask = (exg > 0) | ((green_mask > 0) | (yellow_mask > 0) | (brown_mask > 0))
         foliage_ratio = np.count_nonzero(plant_mask) / total_pixels
 
-        # If human skin is dominant or foliage ratio is insufficient, reject
-        if skin_ratio > 0.18 and skin_ratio >= foliage_ratio:
-            return False
-        if foliage_ratio < 0.15:
+        # Require genuine foliage/lesion presence
+        if foliage_ratio < 0.20:
             return False
 
         return True
 
     def detect_multiscale(self, frame: np.ndarray) -> Tuple[List[dict], Tuple[int, int, int, int]]:
         """
-        Runs dual-scale inference with Foliage Verification Gate:
-          1. High-resolution Center Target Zone (where user holds leaf)
-          2. Full frame (for broader coverage)
-        Returns:
-          (detected_boxes, target_roi_coordinates)
+        Runs high-speed single-pass YOLOv8 inference with Botanical Foliage Verification Gate.
         """
         h, w = frame.shape[:2]
         plant_boxes = []
 
-        # Calculate Center Target ROI (65% of screen centered)
+        # Center Target ROI (70% center zone)
         cx, cy = w // 2, h // 2
         size_w = int(w * 0.70)
         size_h = int(h * 0.70)
@@ -342,73 +338,43 @@ class LocalPlantDetector:
             return plant_boxes, target_roi
 
         with TORCH_INFERENCE():
-            # 1. Scale 1: Scan Center Target ROI at high resolution
-            roi_img = frame[ry1:ry2, rx1:rx2]
-            if roi_img.size > 0 and self._is_plant_foliage(roi_img):
-                try:
-                    results_roi = p_model(roi_img, verbose=False, conf=self.conf_thresh, imgsz=640)
-                    if results_roi and len(results_roi) > 0:
-                        for box in results_roi[0].boxes:
-                            cls_id = int(box.cls[0].item())
-                            name = results_roi[0].names.get(cls_id, f"Class_{cls_id}")
-                            conf = float(box.conf[0].item())
-                            bx1, by1, bx2, by2 = map(int, box.xyxy[0].cpu().numpy())
-                            
-                            # Map ROI local coordinates to Full Frame coordinates
-                            fx1 = max(0, rx1 + bx1)
-                            fy1 = max(0, ry1 + by1)
-                            fw = min(w - fx1, bx2 - bx1)
-                            fh = min(h - fy1, by2 - by1)
+            try:
+                # Single high-speed forward pass on frame with resolution 640
+                results = p_model(frame, verbose=False, conf=self.conf_thresh, imgsz=640)
+                if results and len(results) > 0:
+                    for box in results[0].boxes:
+                        cls_id = int(box.cls[0].item())
+                        name = results[0].names.get(cls_id, f"Class_{cls_id}")
+                        conf = float(box.conf[0].item())
+                        if conf < self.conf_thresh:
+                            continue
 
-                            if fw > 16 and fh > 16:
-                                box_crop = frame[fy1:fy1+fh, fx1:fx1+fw]
-                                # Foliage verification gate on individual bounding box
-                                if self._is_plant_foliage(box_crop):
-                                    info = lookup_agronomic_info(name, conf)
-                                    plant_boxes.append({
-                                        "x": fx1, "y": fy1, "w": fw, "h": fh,
-                                        "conf": conf,
-                                        "display_conf": info["display_confidence"],
-                                        "label": info["clean_name"],
-                                        "raw_label": name,
-                                        "crop": info["crop"],
-                                        "is_diseased": True,
-                                        "source": "Center Scanner"
-                                    })
-                except Exception:
-                    pass
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                        x1 = max(0, min(w - 1, x1))
+                        y1 = max(0, min(h - 1, y1))
+                        x2 = max(0, min(w, x2))
+                        y2 = max(0, min(h, y2))
+                        w_box = max(4, x2 - x1)
+                        h_box = max(4, y2 - y1)
 
-            # 2. Scale 2: If no box found in Center ROI and frame has foliage, scan full frame
-            if len(plant_boxes) == 0 and self._is_plant_foliage(frame):
-                try:
-                    results_full = p_model(frame, verbose=False, conf=self.conf_thresh, imgsz=640)
-                    if results_full and len(results_full) > 0:
-                        for box in results_full[0].boxes:
-                            cls_id = int(box.cls[0].item())
-                            name = results_full[0].names.get(cls_id, f"Class_{cls_id}")
-                            conf = float(box.conf[0].item())
-                            x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
-                            w_box = max(4, x2 - x1)
-                            h_box = max(4, y2 - y1)
+                        if w_box > 16 and h_box > 16:
+                            box_crop = frame[y1:y1+h_box, x1:x1+w_box]
+                            if self._is_plant_foliage(box_crop):
+                                info = lookup_agronomic_info(name, conf)
+                                plant_boxes.append({
+                                    "x": x1, "y": y1, "w": w_box, "h": h_box,
+                                    "conf": conf,
+                                    "display_conf": info["display_confidence"],
+                                    "label": info["clean_name"],
+                                    "raw_label": name,
+                                    "crop": info["crop"],
+                                    "is_diseased": True,
+                                    "source": "Vision AI"
+                                })
+            except Exception as e:
+                logger.debug(f"Plant inference error: {e}")
 
-                            if w_box > 16 and h_box > 16:
-                                box_crop = frame[y1:y1+h_box, x1:x1+w_box]
-                                if self._is_plant_foliage(box_crop):
-                                    info = lookup_agronomic_info(name, conf)
-                                    plant_boxes.append({
-                                        "x": x1, "y": y1, "w": w_box, "h": h_box,
-                                        "conf": conf,
-                                        "display_conf": info["display_confidence"],
-                                        "label": info["clean_name"],
-                                        "raw_label": name,
-                                        "crop": info["crop"],
-                                        "is_diseased": True,
-                                        "source": "Full Frame"
-                                    })
-                except Exception:
-                    pass
-
-        # Non-Maximum Suppression: filter out overlapping boxes and keep top detections
+        # Non-Maximum Suppression
         if len(plant_boxes) > 1:
             plant_boxes = sorted(plant_boxes, key=lambda b: b["conf"], reverse=True)
             clean_boxes = []
@@ -702,7 +668,7 @@ class DiseaseDetector:
     def __init__(
         self,
         model_path: Optional[str] = None,
-        confidence_threshold: float = 0.15,
+        confidence_threshold: float = 0.50,
         persistence_sec: float = 2.0,
         **kwargs
     ):
