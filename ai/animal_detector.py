@@ -190,41 +190,35 @@ class AnimalDetector:
         base_dir = Path(__file__).resolve().parent.parent
 
         candidates.extend([
-            # 1. Project local models directory
+            # 1. Project local models directory (Standard 80-class models)
             base_dir / "models" / "yolo11m.pt",
-            base_dir / "models" / "best.pt",
-            base_dir / "models" / "animal_best.pt",
-            base_dir / "models" / "animal_model.pt",
             base_dir / "models" / "yolo11n.pt",
             base_dir / "models" / "yolov8n.pt",
+            base_dir / "models" / "yolov8s.pt",
+            base_dir / "models" / "yolov8m.pt",
 
-            # 2. Sibling / parent directories
-            base_dir.parent / "animal_detection_model" / "yolo11m.pt",
-            base_dir.parent / "animal_detection_model" / "best.pt",
-            base_dir.parent / "animal_detection_model" / "yolov8s-worldv2.pt",
-            base_dir.parent / "animal_detection_model" / "yolov8m-worldv2.pt",
-
-            # 3. Pi / Linux home paths
-            Path.home() / "PS180_2026" / "animal_detection_model" / "yolo11m.pt",
-            Path.home() / "PS180_2026" / "animal_detection_model" / "best.pt",
-            Path.home() / "animal_detection_model" / "yolo11m.pt",
-            Path.home() / "animal_detection_model" / "best.pt",
-            Path("/home/gullu/PS180_2026/animal_detection_model/yolo11m.pt"),
-            Path("/home/gullu/PS180_2026/animal_detection_model/best.pt"),
-
-            # 4. Windows absolute paths
+            # 2. Windows absolute paths
             Path(r"D:\animal_detection_model\yolo11m.pt"),
-            Path(r"D:\animal_detection_model\best.pt"),
             Path(r"D:\animal_detection_model\yolov8s-worldv2.pt"),
             Path(r"D:\animal_detection_model\yolov8m-worldv2.pt"),
             Path(r"C:\animal_detection_model\yolo11m.pt"),
 
-            # 5. Current working directory
-            Path("models/yolo11m.pt"),
-            Path("models/best.pt"),
-            Path("models/animal_best.pt"),
-            Path("yolo11m.pt"),
-            Path("best.pt"),
+            # 3. Pi / Linux home paths
+            Path.home() / "PS180_2026" / "animal_detection_model" / "yolo11m.pt",
+            Path.home() / "animal_detection_model" / "yolo11m.pt",
+            Path("/home/gullu/PS180_2026/animal_detection_model/yolo11m.pt"),
+
+            # 4. Sibling / parent directories
+            base_dir.parent / "animal_detection_model" / "yolo11m.pt",
+
+            # 5. Fallback custom / fine-tuned models
+            base_dir / "models" / "animal_best.pt",
+            base_dir / "models" / "animal_model.pt",
+            base_dir / "models" / "best.pt",
+            base_dir.parent / "animal_detection_model" / "best.pt",
+            Path(r"D:\animal_detection_model\best.pt"),
+            Path.home() / "PS180_2026" / "animal_detection_model" / "best.pt",
+            Path("/home/gullu/PS180_2026/animal_detection_model/best.pt"),
         ])
 
         seen_paths = set()

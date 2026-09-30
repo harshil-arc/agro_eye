@@ -53,10 +53,10 @@ class ESP32SensorReceiver:
         return ports_list
 
     def _try_open_port(self, port_name: str) -> bool:
-        """Attempts to open a specific serial port with baudrate auto-detection (9600 first for Arduino)."""
+        """Attempts to open a specific serial port with baudrate auto-detection (115200 first for ESP32)."""
         try:
             import serial
-            candidate_bauds = [9600, 115200, 57600]
+            candidate_bauds = [115200, 9600, 57600]
             if self.baudrate not in candidate_bauds:
                 candidate_bauds.insert(0, self.baudrate)
 
@@ -259,6 +259,24 @@ class ESP32SensorReceiver:
                 self.connected_port = None
                 time.sleep(1.0)
 
+
+    def send_command(self, cmd: str) -> bool:
+        """Sends a text command to ESP32 over USB Serial."""
+        if not self.ser or not self.ser.is_open:
+            return False
+        try:
+            cmd_bytes = (cmd.strip() + "\n").encode("utf-8")
+            self.ser.write(cmd_bytes)
+            self.ser.flush()
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to send command to ESP32: {e}")
+            return False
+
+    def send_servo_angle(self, angle: int) -> bool:
+        """Sends a SERVO:<angle> command to ESP32 to position the camera servo."""
+        clamped = max(0, min(180, int(angle)))
+        return self.send_command(f"SERVO:{clamped}")
 
     def get_latest_readings(self) -> Optional[Dict[str, Any]]:
         """Returns the most recent genuine reading from the ESP32 stream if available."""

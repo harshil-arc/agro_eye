@@ -85,8 +85,8 @@ class PlantDetectionSystem:
         self.lora = LoRaAlertManager()
         self.streamer = WebRTCStreamer()
 
-        # 5. Dual-Mode PTZ Camera Servo Controller (Auto Farm Scan / Manual Remote Control)
-        self.servo = ServoController()
+        # 5. Dual-Mode PTZ Camera Servo Controller (Driven natively via ESP32)
+        self.servo = ServoController(sensor_manager=self.sensor_mgr)
 
 
         # State & Threading
@@ -486,7 +486,7 @@ class PlantDetectionSystem:
         logger.info(" Animal AI Model     : Wildlife & Intrusion Guard")
         logger.info(" LoRa Transmitter    : 433 MHz / SF7 / BW125")
         logger.info(" Streaming Engine    : WebRTC Ultra-Low Latency (25-30 FPS)")
-        logger.info(" Camera PTZ Servo    : Auto Sweep & Remote Manual Control (GPIO 18 / 13)")
+        logger.info(" Camera PTZ Servo    : ESP32 Hardware Driven (GPIO 18) / USB Serial")
         logger.info(" Controls: [Q] Quit | [C] Cam | [S] Save | [H] HUD | [A] Animal AI | [+/-] Sens")
         logger.info("=======================================================\n")
 

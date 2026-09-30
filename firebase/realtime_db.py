@@ -144,12 +144,12 @@ class RealtimeDatabaseManager:
             success = True
 
         if success:
-            self._trim_fifo_node("sensor_readings", 200)
+            self._trim_fifo_node("sensor_readings", 100)
         return success
 
-    def push_snapshot(self, snapshot_data: Dict[str, Any], max_limit: int = 200) -> bool:
+    def push_snapshot(self, snapshot_data: Dict[str, Any], max_limit: int = 100) -> bool:
         """
-        Appends snapshot metadata with photo URL to /snapshots and strictly caps at 200 records (FIFO).
+        Appends snapshot metadata with photo URL to /snapshots and strictly caps at 100 records (FIFO).
         """
         success = False
         # 1. Try Firebase Admin SDK if active
@@ -174,7 +174,7 @@ class RealtimeDatabaseManager:
 
     def push_disease_event(self, event_data: Dict[str, Any], max_limit: int = 200) -> bool:
         """
-        Appends disease detection alert with image URL to /disease_alerts and /snapshots (capped at 200 FIFO).
+        Appends disease detection alert with image URL to /disease_alerts (capped at 200 FIFO).
         """
         success = False
         # 1. Try Firebase Admin SDK if active
@@ -195,8 +195,6 @@ class RealtimeDatabaseManager:
 
         if success:
             self._trim_fifo_node("disease_alerts", max_limit)
-            # Also dual-sync to /snapshots for unified photo galleries
-            self.push_snapshot(event_data, max_limit=max_limit)
 
         return success
 

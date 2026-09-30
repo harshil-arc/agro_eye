@@ -16,6 +16,10 @@ class SensorManager:
         """Stops background sensor threads."""
         self.esp32_receiver.stop()
 
+    def send_servo_angle(self, angle: int) -> bool:
+        """Sends servo position command to ESP32."""
+        return self.esp32_receiver.send_servo_angle(angle)
+
     def read_all(self) -> Optional[Dict[str, Any]]:
         """
         Polls ESP32 sensor stream and returns genuine readings.

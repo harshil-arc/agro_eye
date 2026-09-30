@@ -56,7 +56,7 @@ SENSOR_POLL_INTERVAL = 5.0  # seconds between sensor readings
 
 # ESP32 / Arduino Serial Sensor Receiver (JSON / Text stream over Serial)
 ESP32_SERIAL_PORT = os.environ.get("ESP32_PORT", "/dev/ttyUSB0")
-ESP32_BAUDRATE = int(os.environ.get("ESP32_BAUDRATE", "9600"))
+ESP32_BAUDRATE = int(os.environ.get("ESP32_BAUDRATE", "115200"))
 
 # Thresholds for Alerts
 TEMP_HIGH_THRESHOLD = 38.0     # °C
@@ -72,11 +72,10 @@ DHT_TYPE = os.environ.get("DHT_TYPE", "DHT22")
 SOIL_MOISTURE_CHANNEL = int(os.environ.get("SOIL_CHANNEL", "0"))
 
 # ============================================================
-# CAMERA SERVO CONFIGURATION (Raspberry Pi GPIO)
+# CAMERA SERVO CONFIGURATION (Controlled natively via ESP32)
 # ============================================================
-# Default: GPIO 18 (Physical Pin 12, Hardware PWM0) for Pan / Rotation Servo
-SERVO_PAN_PIN = int(os.environ.get("SERVO_PAN_PIN", "18"))
-ENABLE_SERVO = os.environ.get("ENABLE_SERVO", "True").lower() in ("true", "1", "yes")
+# Pan Servo is wired to ESP32 (GPIO 18). Raspberry Pi GPIO is not used.
+ENABLE_SERVO = os.environ.get("ENABLE_SERVO", "False").lower() in ("true", "1", "yes")
 
 # Auto-Sweep Rotation Boundaries (degrees)
 SERVO_AUTO_MIN_ANGLE = int(os.environ.get("SERVO_AUTO_MIN_ANGLE", "30"))
