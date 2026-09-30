@@ -75,7 +75,7 @@ SOIL_MOISTURE_CHANNEL = int(os.environ.get("SOIL_CHANNEL", "0"))
 # CAMERA SERVO CONFIGURATION (Controlled natively via ESP32)
 # ============================================================
 # Pan Servo is wired to ESP32 (GPIO 18). Raspberry Pi GPIO is not used.
-ENABLE_SERVO = os.environ.get("ENABLE_SERVO", "False").lower() in ("true", "1", "yes")
+ENABLE_SERVO = os.environ.get("ENABLE_SERVO", "True").lower() in ("true", "1", "yes")
 
 # Auto-Sweep Rotation Boundaries (degrees)
 SERVO_AUTO_MIN_ANGLE = int(os.environ.get("SERVO_AUTO_MIN_ANGLE", "30"))

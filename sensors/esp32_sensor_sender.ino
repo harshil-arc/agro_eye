@@ -46,6 +46,7 @@ DHT dht(DHTPIN, DHTTYPE);
 
 #if ENABLE_SERVO
 Servo panServo;
+bool isManualMode = false;   // In Manual mode, auto-sweep halts immediately
 int currentServoAngle = 90;
 int servoDirection = 1;      // 1 = sweeping up, -1 = sweeping down
 unsigned long lastServoStep = 0;
@@ -60,7 +61,7 @@ const unsigned long readInterval = 2000; // 2 seconds between telemetry packets
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(500);
 
   // Configure ADC resolution to 12 bits (0-4095)
   analogReadResolution(12);
@@ -79,17 +80,34 @@ void setup() {
   panServo.attach(SERVO_PIN, 500, 2400); // Attach GPIO 18 with 500us - 2400us pulses
   panServo.write(currentServoAngle);
 #endif
+
+  Serial.println("{\"status\":\"ESP32_ONLINE\",\"baud\":115200}");
+  Serial.flush();
 }
 
 void loop() {
-  // Check for incoming serial commands from Raspberry Pi (e.g. angle commands)
-  if (Serial.available() > 0) {
+  // 1. Process incoming commands from Raspberry Pi
+  while (Serial.available() > 0) {
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
-    if (cmd.startsWith("SERVO:")) {
-      int targetAngle = cmd.substring(6).toInt();
+    if (cmd.length() == 0) continue;
+
+    if (cmd.equalsIgnoreCase("MODE:MANUAL")) {
+#if ENABLE_SERVO
+      isManualMode = true;
+#endif
+    } 
+    else if (cmd.equalsIgnoreCase("MODE:AUTO")) {
+#if ENABLE_SERVO
+      isManualMode = false;
+#endif
+    } 
+    else if (cmd.startsWith("SERVO:") || cmd.startsWith("ANGLE:")) {
+      int splitIndex = cmd.indexOf(':');
+      int targetAngle = cmd.substring(splitIndex + 1).toInt();
       targetAngle = constrain(targetAngle, 0, 180);
 #if ENABLE_SERVO
+      isManualMode = true; // Instantly lock into Manual mode when user specifies angle
       currentServoAngle = targetAngle;
       panServo.write(currentServoAngle);
 #endif
@@ -97,8 +115,8 @@ void loop() {
   }
 
 #if ENABLE_SERVO
-  // Smooth auto-sweep oscillation for camera coverage
-  if (millis() - lastServoStep >= servoStepInterval) {
+  // 2. Smooth auto-sweep oscillation ONLY when in Auto mode
+  if (!isManualMode && (millis() - lastServoStep >= servoStepInterval)) {
     lastServoStep = millis();
     currentServoAngle += (servoDirection * servoStepDeg);
     if (currentServoAngle >= servoMaxAngle) {
@@ -112,7 +130,7 @@ void loop() {
   }
 #endif
 
-  // Periodic sensor telemetry output
+  // 3. Periodic sensor telemetry output (every 2 seconds)
   if (millis() - lastReadTime >= readInterval) {
     lastReadTime = millis();
     readAndTransmitTelemetry();
@@ -160,6 +178,9 @@ void readAndTransmitTelemetry() {
     Serial.print(temperature, 1);
     Serial.print(",\"humidity\":");
     Serial.print(humidity, 1);
+  } else {
+    // If DHT is not yet wired or ready, output 0.0 so JSON schema is consistent
+    Serial.print(",\"temperature\":0.0,\"humidity\":0.0");
   }
 
 #if ENABLE_SOIL
@@ -177,4 +198,5 @@ void readAndTransmitTelemetry() {
 #endif
 
   Serial.println("}");
+  Serial.flush();
 }

@@ -109,6 +109,8 @@ class ServoController:
             if self.mode != norm_mode:
                 self.mode = norm_mode
                 logger.info(f"ESP32 Servo Mode changed to: {self.mode.upper()}")
+                if self.sensor_mgr:
+                    self.sensor_mgr.esp32_receiver.send_command(f"MODE:{norm_mode.upper()}")
                 self._push_state_to_cloud(command="mode_change")
 
     def set_position(self, pan: float, command: str = "set_coords", **kwargs):
@@ -120,8 +122,9 @@ class ServoController:
             self.target_pan = clamped_pan
             self.current_pan = clamped_pan
 
-        # Send command to ESP32 over serial
+        # Send Mode and Angle commands to ESP32 over serial
         if self.sensor_mgr:
+            self.sensor_mgr.esp32_receiver.send_command("MODE:MANUAL")
             self.sensor_mgr.send_servo_angle(int(clamped_pan))
 
         logger.info(f"Manual Camera Servo Position via ESP32: Pan={clamped_pan} deg")
@@ -140,7 +143,7 @@ class ServoController:
     def _firebase_watchdog_loop(self):
         """
         Polls Firebase Realtime Database (/camera_control) for live user commands
-        dispatched from the Farmer's Mobile/Web App and relays to ESP32.
+        dispatched from the Farmer's Mobile/Web App and relays to ESP32 immediately.
         """
         logger.info("Firebase Camera PTZ Control Watchdog (ESP32 Bridge) started.")
         while self.running:
@@ -166,20 +169,23 @@ class ServoController:
                                 self.current_pan = self.target_pan
                                 logger.info(f"Remote Manual Pan Command from Farmer App -> ESP32 Pan: {self.current_pan} deg (Cmd: {remote_cmd})")
                                 if self.sensor_mgr:
+                                    self.sensor_mgr.esp32_receiver.send_command("MODE:MANUAL")
                                     self.sensor_mgr.send_servo_angle(int(self.current_pan))
                             else:
                                 if prev_mode != "auto":
                                     logger.info("Remote Auto Sweep Mode activated on ESP32 from Farmer App.")
+                                    if self.sensor_mgr:
+                                        self.sensor_mgr.esp32_receiver.send_command("MODE:AUTO")
 
             except Exception as e:
                 logger.debug(f"Firebase camera control poll error: {e}")
 
-            time.sleep(0.5)  # 500ms poll interval
+            time.sleep(0.3)  # 300ms poll interval
 
     def start(self):
         """Starts the Firebase control watchdog thread."""
         if not self.enabled:
-            logger.info("Camera Servo Controller is disabled or handled standalone on ESP32.")
+            logger.info("Camera Servo Controller is disabled in config.")
             return
 
         self.running = True

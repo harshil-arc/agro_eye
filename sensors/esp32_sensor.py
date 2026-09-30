@@ -1,3 +1,5 @@
+import os
+import glob
 import json
 import re
 import threading
@@ -33,15 +35,24 @@ class ESP32SensorReceiver:
         self.last_log_time: float = 0.0
 
     def _find_available_ports(self) -> List[str]:
-        """Scans system for active USB serial ports."""
+        """Scans system for active USB serial ports with cross-platform fallback."""
         ports_list = []
         try:
             import serial.tools.list_ports
             detected = serial.tools.list_ports.comports()
             for p in detected:
-                ports_list.append(p.device)
+                if p.device not in ports_list:
+                    ports_list.append(p.device)
         except Exception:
             pass
+
+        # Linux/Pi glob scan for USB serial devices
+        if os.name != "nt":
+            import glob
+            for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/serial/by-id/*"]:
+                for dev in glob.glob(pattern):
+                    if dev not in ports_list:
+                        ports_list.append(dev)
 
         # Prioritize preferred port if available
         if self.preferred_port and self.preferred_port in ports_list:
