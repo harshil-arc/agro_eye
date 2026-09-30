@@ -186,6 +186,17 @@ class WebRTCStreamer:
         """Target for background daemon thread."""
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+
+        def _silent_asyncio_handler(loop, context):
+            exception = context.get("exception")
+            message = context.get("message", "")
+            # Catch and silence harmless STUN socket retries / closed transport callbacks
+            if "Fatal write error" in message or "sendto" in str(exception) or "NoneType" in str(exception) or "aioice" in str(context):
+                return
+            logger.debug(f"WebRTC asyncio event: {message} ({exception})")
+
+        self.loop.set_exception_handler(_silent_asyncio_handler)
+
         try:
             self.loop.run_until_complete(self._poll_signaling_loop())
         except Exception as e:

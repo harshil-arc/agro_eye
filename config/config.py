@@ -64,7 +64,7 @@ TEMP_LOW_THRESHOLD = 10.0      # °C
 HUMIDITY_HIGH_THRESHOLD = 90.0   # %
 SOIL_DRY_THRESHOLD = 30.0      # % (Alert if moisture < 30%)
 SOIL_WET_THRESHOLD = 85.0      # % (Alert if moisture > 85%)
-MQ135_ALERT_THRESHOLD = 600    # Raw ADC count for poor air quality / gas leak
+MQ135_ALERT_THRESHOLD = 3300    # Raw 12-bit ADC count (~2.7V) for air quality alert
 
 # Direct Hardware Pins (if used directly on Pi instead of ESP32)
 DHT_PIN = int(os.environ.get("DHT_PIN", "4"))

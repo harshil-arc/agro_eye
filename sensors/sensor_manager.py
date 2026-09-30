@@ -44,17 +44,17 @@ class SensorManager:
 
         alerts: List[str] = []
 
-        # Temperature
+        # Temperature (Ignore <= 0.0 boot / disconnected placeholder)
         temp = readings.get("temperature")
-        if temp is not None:
+        if temp is not None and temp > 0.0:
             if temp >= TEMP_HIGH_THRESHOLD:
                 alerts.append(f"HIGH_TEMP:{temp}C")
             elif temp <= TEMP_LOW_THRESHOLD:
                 alerts.append(f"LOW_TEMP:{temp}C")
 
-        # Humidity
+        # Humidity (Ignore <= 0.0 placeholder)
         hum = readings.get("humidity")
-        if hum is not None and hum >= HUMIDITY_HIGH_THRESHOLD:
+        if hum is not None and hum > 0.0 and hum >= HUMIDITY_HIGH_THRESHOLD:
             alerts.append(f"HIGH_HUMIDITY:{hum}%")
 
         # Soil Moisture

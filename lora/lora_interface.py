@@ -70,7 +70,7 @@ class LoRaInterface:
         Transmits a raw string/JSON packet over LoRa.
         """
         if not self.is_ready or self.driver is None:
-            logger.warning(f"LoRa TX Skipped (Transceiver not ready: {self.last_error or 'Hardware uninitialized'})")
+            logger.debug(f"LoRa TX Skipped (Transceiver not ready: {self.last_error or 'Hardware uninitialized'})")
             return False
 
         try:

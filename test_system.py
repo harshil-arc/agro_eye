@@ -118,11 +118,11 @@ class TestPlantSystem(unittest.TestCase):
                 "temperature": 25.0,
                 "humidity": 50.0,
                 "soil_moisture": 15.0,
-                "mq135_raw": 750
+                "mq135_raw": 3500
             }
             alerts = mgr.check_alerts(test_data)
             self.assertIn("SOIL_DRY:15.0%", alerts)
-            self.assertIn("POOR_AIR_QUALITY_MQ135:750", alerts)
+            self.assertIn("POOR_AIR_QUALITY_MQ135:3500", alerts)
         finally:
             mgr.stop()
 

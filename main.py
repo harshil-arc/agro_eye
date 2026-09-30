@@ -119,6 +119,8 @@ class PlantDetectionSystem:
         self.last_animal_alert_time: float = 0.0
         self.animal_alert_cooldown: float = 10.0
         self.consecutive_animal_frames: int = 0
+        self.last_sensor_alert_times: dict = {}
+        self.sensor_alert_cooldown: float = 60.0
 
     def _ai_worker_loop(self):
         """
@@ -225,11 +227,15 @@ class PlantDetectionSystem:
                 # 3. Broadcast newest sensor reading over LoRa to ESP32 OLED Receiver
                 self.lora.send_latest_sensor_data(sensor_data)
 
-                # 4. Check sensor threshold alerts
+                # 4. Check sensor threshold alerts (Debounced to max once per 60s per alert)
                 alerts = self.sensor_mgr.check_alerts(sensor_data)
+                now_t = time.time()
                 for alert in alerts:
-                    logger.warning(f"Sensor threshold alert triggered: {alert}")
-                    self.lora.trigger_sensor_alert(alert)
+                    last_fired = self.last_sensor_alert_times.get(alert, 0.0)
+                    if (now_t - last_fired) >= self.sensor_alert_cooldown:
+                        self.last_sensor_alert_times[alert] = now_t
+                        logger.warning(f"Sensor threshold alert triggered: {alert}")
+                        self.lora.trigger_sensor_alert(alert)
 
             except Exception as e:
                 logger.error(f"Error in sensor monitoring thread: {e}")

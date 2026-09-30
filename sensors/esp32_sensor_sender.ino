@@ -7,12 +7,12 @@
  * Pin Connections:
  *   ESP32 Pin      Hardware / Sensor Pin
  *   -------------------------------------------------
- *   GPIO 4         DHT11 / DHT22 Data Pin (Pullup to 3.3V)
+ *   GPIO 4         DHT11 / DHT22 Data Pin (Requires Pullup to 3.3V)
  *   GPIO 34 (ADC1) Soil Moisture Sensor Analog Out (AOUT)
  *   GPIO 35 (ADC1) MQ-135 Gas / Air Quality Analog Out (AOUT)
  *   GPIO 18        Camera Pan Servo Signal Pin (PWM)
- *   VIN (5V)       Servo VCC (Red Wire) & 5V Sensors
- *   3.3V           DHT / Low-Voltage Sensor VCC
+ *   VIN (5V)       Servo VCC (Red Wire) - MUST BE 5V (Not 3.3V!)
+ *   3.3V           DHT / Soil Sensor VCC
  *   GND            Common Ground (Black/Brown Wire)
  * ==============================================================================
  */
@@ -28,15 +28,15 @@
 
 // ---------- Pin Definitions ----------
 #define DHTPIN            4       // GPIO 4 for DHT Data
-#define DHTTYPE           DHT11   // Change to DHT22 if using white DHT22 sensor
+#define DHTTYPE           DHT11   // Set to DHT11 (Blue) or DHT22 (White)
 
 #define SOIL_PIN          34      // GPIO 34 (ADC1_CH6) for Soil Moisture
 #define MQ135_PIN         35      // GPIO 35 (ADC1_CH7) for MQ-135 Air Quality
 #define SERVO_PIN         18      // GPIO 18 for Pan Servo PWM Control
 
 // ---------- Calibration (ESP32 12-bit ADC: 0 - 4095) ----------
-// In air (completely dry): ~3200 - 4095
-// In water (completely wet): ~1200 - 1600
+// In air (dry): ~3200 - 4095
+// In water (wet): ~1200 - 1600
 #define SOIL_DRY_RAW      3600
 #define SOIL_WET_RAW      1400
 
@@ -53,7 +53,7 @@ unsigned long lastServoStep = 0;
 const int servoMinAngle = 30;
 const int servoMaxAngle = 150;
 const int servoStepDeg = 2;
-const unsigned long servoStepInterval = 60; // ms per step for smooth sweep
+const unsigned long servoStepInterval = 50; // ms per step for smooth sweep
 #endif
 
 unsigned long lastReadTime = 0;
@@ -67,21 +67,22 @@ void setup() {
   analogReadResolution(12);
 
 #if ENABLE_DHT
+  pinMode(DHTPIN, INPUT_PULLUP);
   dht.begin();
 #endif
 
 #if ENABLE_SERVO
-  // Allow allocation of all timers for ESP32Servo
+  // Allocate hardware PWM timers for ESP32Servo
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
   ESP32PWM::allocateTimer(2);
   ESP32PWM::allocateTimer(3);
-  panServo.setPeriodHertz(50); // Standard 50hz servo
-  panServo.attach(SERVO_PIN, 500, 2400); // Attach GPIO 18 with 500us - 2400us pulses
+  panServo.setPeriodHertz(50);             // Standard 50Hz servo
+  panServo.attach(SERVO_PIN, 500, 2500);   // Standard 500us to 2500us SG90/MG995 pulses
   panServo.write(currentServoAngle);
 #endif
 
-  Serial.println("{\"status\":\"ESP32_ONLINE\",\"baud\":115200}");
+  Serial.println("{\"status\":\"ESP32_READY\",\"baud\":115200}");
   Serial.flush();
 }
 
@@ -107,7 +108,7 @@ void loop() {
       int targetAngle = cmd.substring(splitIndex + 1).toInt();
       targetAngle = constrain(targetAngle, 0, 180);
 #if ENABLE_SERVO
-      isManualMode = true; // Instantly lock into Manual mode when user specifies angle
+      isManualMode = true; // Instantly switch to manual mode and lock to target angle
       currentServoAngle = targetAngle;
       panServo.write(currentServoAngle);
 #endif
@@ -142,12 +143,16 @@ void readAndTransmitTelemetry() {
   float humidity = 0.0;
   bool dhtValid = false;
 
-  // 1. Read DHT
+  // 1. Read DHT with retry loop
 #if ENABLE_DHT
-  humidity = dht.readHumidity();
-  temperature = dht.readTemperature(); // Celsius
-  if (!isnan(humidity) && !isnan(temperature)) {
-    dhtValid = true;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    humidity = dht.readHumidity();
+    temperature = dht.readTemperature();
+    if (!isnan(humidity) && !isnan(temperature) && humidity > 0.0) {
+      dhtValid = true;
+      break;
+    }
+    delay(50);
   }
 #endif
 
@@ -156,7 +161,6 @@ void readAndTransmitTelemetry() {
   float soilPercent = 0.0;
 #if ENABLE_SOIL
   soilRaw = analogRead(SOIL_PIN);
-  // Map and constrain 0-100%
   soilPercent = ((float)(SOIL_DRY_RAW - soilRaw) / (float)(SOIL_DRY_RAW - SOIL_WET_RAW)) * 100.0;
   if (soilPercent < 0.0) soilPercent = 0.0;
   if (soilPercent > 100.0) soilPercent = 100.0;
@@ -170,7 +174,7 @@ void readAndTransmitTelemetry() {
   mqVoltage = (mqRaw / 4095.0) * 3.3; // ESP32 ADC reference is 3.3V
 #endif
 
-  // 4. Output Compact JSON Line to USB Serial (Read by Raspberry Pi)
+  // 4. Output Clean JSON Line to USB Serial
   Serial.print("{\"source\":\"esp32_sensor\"");
 
   if (dhtValid) {
@@ -178,9 +182,6 @@ void readAndTransmitTelemetry() {
     Serial.print(temperature, 1);
     Serial.print(",\"humidity\":");
     Serial.print(humidity, 1);
-  } else {
-    // If DHT is not yet wired or ready, output 0.0 so JSON schema is consistent
-    Serial.print(",\"temperature\":0.0,\"humidity\":0.0");
   }
 
 #if ENABLE_SOIL

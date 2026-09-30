@@ -93,7 +93,7 @@ class RealtimeDatabaseManager:
                         excess = len(sorted_keys) - max_limit
                         for old_k in sorted_keys[:excess]:
                             ref.child(old_k).delete()
-                        logger.info(f"Firebase /{node_name} FIFO pruned: removed {excess} oldest records (capped at {max_limit}).")
+                        logger.debug(f"Firebase /{node_name} FIFO pruned: removed {excess} oldest records (capped at {max_limit}).")
                     return
                 except Exception as e:
                     logger.debug(f"Admin SDK FIFO prune on /{node_name} failed: {e}. Trying REST.")
@@ -105,7 +105,7 @@ class RealtimeDatabaseManager:
                 excess = len(sorted_keys) - max_limit
                 for old_k in sorted_keys[:excess]:
                     self._rest_delete(f"{node_name}/{old_k}")
-                logger.info(f"Firebase /{node_name} REST FIFO pruned: removed {excess} oldest records (capped at {max_limit}).")
+                logger.debug(f"Firebase /{node_name} REST FIFO pruned: removed {excess} oldest records (capped at {max_limit}).")
         except Exception as e:
             logger.debug(f"Error during FIFO prune for /{node_name}: {e}")
 
@@ -133,14 +133,14 @@ class RealtimeDatabaseManager:
                 from firebase_admin import db
                 ref = db.reference("sensor_readings")
                 ref.push(data)
-                logger.info("Sensor reading pushed to Firebase Realtime Database (Admin SDK).")
+                logger.debug("Sensor reading pushed to Firebase Realtime Database (Admin SDK).")
                 success = True
             except Exception as e:
                 logger.debug(f"Admin SDK push_sensor_reading failed: {e}. Falling back to REST.")
 
         # 2. Direct REST API Fallback
         if not success and self._rest_post("sensor_readings", data):
-            logger.info("Sensor reading pushed to Firebase Realtime Database (REST).")
+            logger.debug("Sensor reading pushed to Firebase Realtime Database (REST).")
             success = True
 
         if success:
