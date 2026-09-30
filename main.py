@@ -18,8 +18,8 @@ from typing import Optional
 
 try:
     import torch
-    # Cap PyTorch intra-op threads to prevent starving OpenCV and WebRTC
-    torch.set_num_threads(min(4, os.cpu_count() or 4))
+    # Cap PyTorch intra-op threads to 2 to prevent starving OpenCV and WebRTC on Raspberry Pi
+    torch.set_num_threads(min(2, os.cpu_count() or 2))
     torch.set_grad_enabled(False)
     TORCH_INFERENCE = torch.inference_mode
 except Exception:

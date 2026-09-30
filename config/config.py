@@ -44,8 +44,8 @@ ROI_SIZE = 360
 YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH", str(BASE_DIR / "models" / "disease_model.pt"))
 CONFIDENCE_THRESHOLD = float(os.environ.get("CONFIDENCE_THRESHOLD", "0.50"))
 
-# Animal & Wildlife Detection Model (D:\animal_detection_model)
-ANIMAL_MODEL_PATH = os.environ.get("ANIMAL_MODEL_PATH", r"D:\animal_detection_model\yolo11m.pt")
+# Animal & Wildlife Detection Model
+ANIMAL_MODEL_PATH = os.environ.get("ANIMAL_MODEL_PATH", str(BASE_DIR / "models" / "yolo11m.pt"))
 ANIMAL_CONF_THRESHOLD = float(os.environ.get("ANIMAL_CONF_THRESHOLD", "0.45"))
 ENABLE_ANIMAL_DETECTION = os.environ.get("ENABLE_ANIMAL_DETECTION", "True").lower() in ("true", "1", "yes")
 
@@ -123,7 +123,7 @@ SYNC_INTERVAL = 10.0  # seconds to retry flushing offline buffer to Firebase
 # WEBRTC LIVE VIDEO STREAMING CONFIGURATION
 # ============================================================
 ENABLE_STREAMING = os.environ.get("ENABLE_STREAMING", "True").lower() in ("true", "1", "yes")
-STREAM_FPS = int(os.environ.get("STREAM_FPS", "25"))
+STREAM_FPS = int(os.environ.get("STREAM_FPS", "30"))
 STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
 STREAM_HEIGHT = int(os.environ.get("STREAM_HEIGHT", "480"))
 WEBRTC_DEVICE_ID = os.environ.get("WEBRTC_DEVICE_ID", "pi_agroeye_01")

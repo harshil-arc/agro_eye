@@ -1,4 +1,4 @@
-# 100% Offline Core Computer Vision & YOLOv8 AI
+# Core Computer Vision & YOLOv8 AI
 opencv-python-headless>=4.8.0; platform_machine == "aarch64" or platform_machine == "armv7l"
 opencv-python>=4.8.0; platform_machine != "aarch64" and platform_machine != "armv7l"
 numpy>=1.23.0
@@ -12,12 +12,10 @@ pillow>=9.5.0
 # Firebase Cloud Sync
 firebase-admin>=6.2.0
 
-# Serial & Modbus (LoRa & Sensor Telemetry)
+# Serial (LoRa & ESP32 Sensor Telemetry)
 pyserial>=3.5
-minimalmodbus>=2.1.0
 
 # WebRTC Low-Latency Live Video Streaming
 aiortc>=1.8.0
 av>=11.0.0
 aiohttp>=3.9.0
-

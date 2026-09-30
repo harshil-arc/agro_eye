@@ -165,15 +165,22 @@ class ServoController:
                             self.mode = remote_mode
 
                             if remote_mode == "manual":
-                                self.target_pan = max(0.0, min(180.0, remote_pan))
-                                self.current_pan = self.target_pan
-                                logger.info(f"Remote Manual Pan Command from Farmer App -> ESP32 Pan: {self.current_pan} deg (Cmd: {remote_cmd})")
-                                if self.sensor_mgr:
-                                    self.sensor_mgr.esp32_receiver.send_command("MODE:MANUAL")
-                                    self.sensor_mgr.send_servo_angle(int(self.current_pan))
+                                if remote_cmd == "mode_change" and prev_mode != "manual":
+                                    # User merely flipped the switch to Manual Mode -> Freeze at current position immediately
+                                    logger.info("Farmer App switched to MANUAL MODE -> Freezing camera servo at current position.")
+                                    if self.sensor_mgr:
+                                        self.sensor_mgr.esp32_receiver.send_command("MODE:MANUAL")
+                                else:
+                                    # User actively dragged angle slider / pressed direction button
+                                    self.target_pan = max(0.0, min(180.0, remote_pan))
+                                    self.current_pan = self.target_pan
+                                    logger.info(f"Manual Pan Command from Farmer App -> ESP32 Pan: {self.current_pan}° (Cmd: {remote_cmd})")
+                                    if self.sensor_mgr:
+                                        self.sensor_mgr.esp32_receiver.send_command("MODE:MANUAL")
+                                        self.sensor_mgr.send_servo_angle(int(self.current_pan))
                             else:
                                 if prev_mode != "auto":
-                                    logger.info("Remote Auto Sweep Mode activated on ESP32 from Farmer App.")
+                                    logger.info("Farmer App switched to AUTO SWEEP MODE -> Resuming camera auto-sweep.")
                                     if self.sensor_mgr:
                                         self.sensor_mgr.esp32_receiver.send_command("MODE:AUTO")
 

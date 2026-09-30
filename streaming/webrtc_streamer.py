@@ -102,7 +102,17 @@ class WebRTCStreamer:
         self.pc = RTCPeerConnection(configuration=config)
 
         # Attach custom video track
-        self.pc.addTrack(self.video_track)
+        transceiver = self.pc.addTrack(self.video_track)
+        try:
+            from aiortc import RTCRtpSender
+            caps = RTCRtpSender.getCapabilities("video")
+            if caps and caps.codecs:
+                # Prioritize H264 / VP8 for hardware & low-latency mobile playback
+                h264_vp8 = [c for c in caps.codecs if c.name.upper() in ("H264", "VP8")]
+                if h264_vp8:
+                    transceiver.setCodecPreferences(h264_vp8)
+        except Exception:
+            pass
 
         @self.pc.on("connectionstatechange")
         async def on_connection_state():
@@ -144,7 +154,7 @@ class WebRTCStreamer:
 
         # 3. Send Answer to Firebase Signaling Channel
         self.signaling.send_answer(self.pc.localDescription.sdp, self.pc.localDescription.type)
-        logger.info(" WebRTC: SDP Answer dispatched to Firebase Signaling Channel.")
+        logger.info("📡 WebRTC: SDP Answer dispatched to Firebase Signaling Channel.")
 
     async def _poll_signaling_loop(self):
         """Continuous background async loop polling Firebase for incoming stream requests & candidates."""
@@ -179,7 +189,13 @@ class WebRTCStreamer:
             except Exception as e:
                 logger.debug(f"WebRTC signaling poll error: {e}")
 
-            await asyncio.sleep(1.0)
+            # Ultra-fast responsive poll timing:
+            if self.pc and self.pc.connectionState in ("connecting", "checking", "new"):
+                await asyncio.sleep(0.04)  # 40ms ultra-fast handshake
+            elif self.is_streaming:
+                await asyncio.sleep(0.4)   # 400ms during active stream
+            else:
+                await asyncio.sleep(0.08)  # 80ms for instant app connection response
 
 
     def _run_event_loop(self):

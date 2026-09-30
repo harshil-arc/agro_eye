@@ -492,9 +492,7 @@ class PlantPathologyHUD:
 
         # --- 4. TOP HEADER STATUS BAR (Two clean rows, zero overlap) ---
         top_bar_h = 58
-        overlay = canvas.copy()
-        cv2.rectangle(overlay, (0, 0), (w, top_bar_h), (15, 20, 24), -1)
-        cv2.addWeighted(overlay, 0.88, canvas, 0.12, 0, canvas)
+        cv2.rectangle(canvas, (0, 0), (w, top_bar_h), (18, 24, 28), -1)
         cv2.line(canvas, (0, top_bar_h), (w, top_bar_h), (50, 70, 80), 1)
 
         # Row 1: System Title & Dual Telemetry
@@ -553,9 +551,7 @@ class PlantPathologyHUD:
             panel_y = top_bar_h + 10
             panel_h = min(h - top_bar_h - 25, 590)
 
-            card_overlay = canvas.copy()
-            cv2.rectangle(card_overlay, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (12, 16, 20), -1)
-            cv2.addWeighted(card_overlay, 0.90, canvas, 0.10, 0, canvas)
+            cv2.rectangle(canvas, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (15, 20, 25), -1)
             cv2.rectangle(canvas, (panel_x, panel_y), (panel_x + panel_w, panel_y + panel_h), (50, 70, 80), 1)
 
             cv2.rectangle(canvas, (panel_x, panel_y), (panel_x + panel_w, panel_y + 32), (25, 35, 45), -1)

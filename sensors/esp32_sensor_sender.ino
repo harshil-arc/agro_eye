@@ -93,14 +93,16 @@ void loop() {
     cmd.trim();
     if (cmd.length() == 0) continue;
 
-    if (cmd.equalsIgnoreCase("MODE:MANUAL")) {
+    if (cmd.equalsIgnoreCase("MODE:MANUAL") || cmd.equalsIgnoreCase("FREEZE")) {
 #if ENABLE_SERVO
       isManualMode = true;
+      panServo.write(currentServoAngle); // Instantly freeze at exact current angle
 #endif
     } 
-    else if (cmd.equalsIgnoreCase("MODE:AUTO")) {
+    else if (cmd.equalsIgnoreCase("MODE:AUTO") || cmd.equalsIgnoreCase("RESUME")) {
 #if ENABLE_SERVO
       isManualMode = false;
+      lastServoStep = millis();
 #endif
     } 
     else if (cmd.startsWith("SERVO:") || cmd.startsWith("ANGLE:")) {
@@ -108,7 +110,7 @@ void loop() {
       int targetAngle = cmd.substring(splitIndex + 1).toInt();
       targetAngle = constrain(targetAngle, 0, 180);
 #if ENABLE_SERVO
-      isManualMode = true; // Instantly switch to manual mode and lock to target angle
+      isManualMode = true;
       currentServoAngle = targetAngle;
       panServo.write(currentServoAngle);
 #endif

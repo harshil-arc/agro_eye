@@ -17,9 +17,12 @@ class FirebaseWebRTCSignaling:
         self.db_url = (db_url or FIREBASE_DATABASE_URL or "").rstrip("/")
         self.session_path = session_path.strip("/")
         self.session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=15, pool_maxsize=30, max_retries=1)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def _get_node(self, subpath: str = "") -> Optional[Any]:
-        """Fetches data from Firebase RTDB node."""
+        """Fetches data from Firebase RTDB node with sub-second response time."""
         path = f"{self.session_path}/{subpath}".strip("/") if subpath else self.session_path
         
         # 1. Try Firebase Admin SDK
@@ -36,7 +39,7 @@ class FirebaseWebRTCSignaling:
             return None
         url = f"{self.db_url}/{path}.json"
         try:
-            resp = self.session.get(url, timeout=5.0)
+            resp = self.session.get(url, timeout=1.5)
             if resp.status_code == 200:
                 return resp.json()
         except Exception as e:
