@@ -48,7 +48,33 @@ class USBCamera:
         else:
             return [cv2.CAP_ANY]
 
-    def _configure_capture(self, cap: cv2.VideoCapture):
+    def _find_candidate_indices(self) -> list:
+        """Discovers all potential video capture indices on the current OS."""
+        candidates = []
+        # 1. Configured preferred index
+        for idx in CAMERA_INDICES:
+            if idx not in candidates:
+                candidates.append(idx)
+
+        # 2. On Linux, discover all /dev/video* nodes
+        if platform.system() == "Linux":
+            import glob
+            import re
+            for path in sorted(glob.glob("/dev/video*")):
+                m = re.search(r'video(\d+)', path)
+                if m:
+                    idx = int(m.group(1))
+                    if idx not in candidates:
+                        candidates.append(idx)
+
+        # 3. Standard fallback indices
+        for idx in [0, 1, 2, 3, 4]:
+            if idx not in candidates:
+                candidates.append(idx)
+
+        return candidates
+
+    def _configure_capture(self, cap: cv2.VideoCapture, try_mjpg: bool = True, custom_width: Optional[int] = None, custom_height: Optional[int] = None):
         """Configures capture parameters for maximum FPS and minimum latency."""
         try:
             # 1. Single frame buffer to eliminate lag
@@ -56,16 +82,19 @@ class USBCamera:
         except Exception:
             pass
 
-        try:
-            # 2. Hardware MJPG compression for high USB transfer rates
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-        except Exception:
-            pass
+        if try_mjpg:
+            try:
+                # 2. Hardware MJPG compression for high USB transfer rates
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            except Exception:
+                pass
 
         try:
-            # 3. Target 30 FPS at target resolution
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            # 3. Set resolution
+            w = custom_width or self.width
+            h = custom_height or self.height
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
             cap.set(cv2.CAP_PROP_FPS, 30)
         except Exception:
             pass
@@ -95,39 +124,46 @@ class USBCamera:
     def open(self, verbose: bool = True) -> bool:
         """Searches and opens an available USB camera across configured indices and backends."""
         self.release()
+        search_indices = self._find_candidate_indices()
         if verbose and not self._logged_no_cam:
-            logger.info("Searching for high-speed USB camera (prioritizing Index 1)...")
+            logger.info(f"Searching for camera across devices {search_indices}...")
         backends = self._get_backends()
-
-        # Prioritize Camera 1 (External USB Webcam) over Camera 0 (Laptop)
-        search_indices = [1, 0, 2]
 
         for camera_index in search_indices:
             for backend in backends:
                 try:
                     cap = cv2.VideoCapture(camera_index, backend)
-                    if cap.isOpened():
-                        self._configure_capture(cap)
+                    if not cap.isOpened():
+                        continue
 
-                        # Test reading a test frame
+                    # Try requested resolution with MJPG first
+                    self._configure_capture(cap, try_mjpg=True)
+                    ret, test_frame = cap.read()
+
+                    # Fallback to default format / 640x480 if HD negotiation failed
+                    if not ret or test_frame is None:
+                        self._configure_capture(cap, try_mjpg=False, custom_width=640, custom_height=480)
                         ret, test_frame = cap.read()
-                        if ret and test_frame is not None:
-                            self.cap = cap
-                            self.active_index = camera_index
-                            self.consecutive_errors = 0
-                            self._logged_no_cam = False
-                            cam_type = "USB External Webcam" if camera_index == 1 else f"Camera Device {camera_index}"
-                            logger.info(f"📷 Camera connected (Index {camera_index} - {cam_type}, {self.width}x{self.height} @ 30 FPS)")
-                            
-                            # Start background capture thread
-                            self._running = True
-                            with self._lock:
-                                self._latest_frame = test_frame
-                            self._thread = threading.Thread(target=self._capture_worker, daemon=True)
-                            self._thread.start()
-                            return True
 
-                        cap.release()
+                    if ret and test_frame is not None:
+                        actual_h, actual_w = test_frame.shape[:2]
+                        self.cap = cap
+                        self.active_index = camera_index
+                        self.consecutive_errors = 0
+                        self._logged_no_cam = False
+                        backend_name = "V4L2" if backend == cv2.CAP_V4L2 else ("DSHOW" if backend == cv2.CAP_DSHOW else "ANY")
+                        cam_type = "USB External Webcam" if camera_index != 0 else "Primary / USB Camera"
+                        logger.info(f"📷 Camera connected (Index {camera_index} [{backend_name}] - {cam_type}, {actual_w}x{actual_h} @ 30 FPS)")
+                        
+                        # Start background capture thread
+                        self._running = True
+                        with self._lock:
+                            self._latest_frame = test_frame
+                        self._thread = threading.Thread(target=self._capture_worker, daemon=True)
+                        self._thread.start()
+                        return True
+
+                    cap.release()
                 except Exception as e:
                     logger.debug(f"Camera open error (Index {camera_index}, Backend {backend}): {e}")
                     continue

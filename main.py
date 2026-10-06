@@ -1,8 +1,45 @@
 import os
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
-if os.name != "nt" and "DISPLAY" not in os.environ:
-    os.environ["DISPLAY"] = ":0"
+
+def _setup_linux_display():
+    """Auto-configures X11 / Wayland display environment for Raspberry Pi desktop."""
+    if os.name == "nt":
+        return
+    
+    # 1. Fallback to default X11 display if not present
+    if "DISPLAY" not in os.environ and "WAYLAND_DISPLAY" not in os.environ:
+        os.environ["DISPLAY"] = ":0"
+
+    # 2. Discover XDG_RUNTIME_DIR for Wayland and Qt
+    if "XDG_RUNTIME_DIR" not in os.environ:
+        for uid in [os.getuid() if hasattr(os, "getuid") else 1000, 1000, 1001]:
+            candidate = f"/run/user/{uid}"
+            if os.path.exists(candidate):
+                os.environ["XDG_RUNTIME_DIR"] = candidate
+                break
+
+    # 3. Discover Wayland socket if active
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir and "WAYLAND_DISPLAY" not in os.environ:
+        for sock in ["wayland-0", "wayland-1"]:
+            if os.path.exists(os.path.join(runtime_dir, sock)):
+                os.environ["WAYLAND_DISPLAY"] = sock
+                break
+
+    # 4. Discover Xauthority for sudo / SSH execution
+    if "XAUTHORITY" not in os.environ:
+        for auth in [
+            os.path.expanduser("~/.Xauthority"),
+            "/home/pi/.Xauthority",
+            "/home/gullu/.Xauthority",
+            "/run/user/1000/.Xauthority"
+        ]:
+            if os.path.exists(auth):
+                os.environ["XAUTHORITY"] = auth
+                break
+
+_setup_linux_display()
 
 import sys
 import time
@@ -528,10 +565,16 @@ class PlantDetectionSystem:
         # 7. Initialize Local Desktop Camera Live Monitor Window
         if self.gui_available:
             try:
-                cv2.namedWindow("AgroEye - Plant Disease & Animal Intrusion Monitor", cv2.WINDOW_AUTOSIZE)
+                cv2.namedWindow("AgroEye - Plant Disease & Animal Intrusion Monitor", cv2.WINDOW_NORMAL)
+                cv2.resizeWindow("AgroEye - Plant Disease & Animal Intrusion Monitor", 1280, 720)
+                splash_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+                cv2.putText(splash_frame, "AgroEye Vision AI - Initializing Hardware...", (320, 360),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 220, 255), 2, cv2.LINE_AA)
+                cv2.imshow("AgroEye - Plant Disease & Animal Intrusion Monitor", splash_frame)
+                cv2.waitKey(1)
                 logger.info("🖥️ Local Camera Live Monitor Window initialized on display.")
             except Exception as e:
-                logger.warning(f"Local GUI window init skipped ({e}). Running in headless SRT streaming mode.")
+                logger.warning(f"Local GUI window init skipped ({e}). Running in headless streaming mode.")
                 self.gui_available = False
 
         logger.info("\n=======================================================")
@@ -553,10 +596,34 @@ class PlantDetectionSystem:
                 # Camera reconnection handler
                 if self.camera.cap is None or not self.camera.cap.isOpened():
                     now = time.time()
-                    if now - last_cam_retry >= 4.0:
+                    if now - last_cam_retry >= 2.5:
                         last_cam_retry = now
                         self.camera.open(verbose=False)
-                    time.sleep(0.5)
+
+                    if self.gui_available:
+                        try:
+                            standby_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+                            cv2.putText(standby_frame, "AgroEye - Searching for Camera Device...", (330, 320),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 215, 255), 2, cv2.LINE_AA)
+                            cv2.putText(standby_frame, "Connecting to /dev/video0 or external USB camera", (340, 370),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 180, 180), 1, cv2.LINE_AA)
+
+                            if self.latest_sensor_data:
+                                t = self.latest_sensor_data.get('temperature')
+                                h = self.latest_sensor_data.get('humidity')
+                                m = self.latest_sensor_data.get('soil_moisture')
+                                s_str = f"Sensors Active -> Temp: {t}C | Hum: {h}% | Soil: {m}%"
+                                cv2.putText(standby_frame, s_str, (40, 680),
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 180), 1, cv2.LINE_AA)
+
+                            cv2.imshow("AgroEye - Plant Disease & Animal Intrusion Monitor", standby_frame)
+                            key = cv2.waitKey(100) & 0xFF
+                            if key in [ord('q'), ord('Q'), 27]:
+                                break
+                        except Exception:
+                            pass
+                    else:
+                        time.sleep(0.5)
                     continue
 
                 # Synchronized frame grab (blocks until new hardware frame arrives, locked at ~30 FPS)

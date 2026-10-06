@@ -32,9 +32,10 @@ ENABLE_GUI_DISPLAY = os.environ.get("ENABLE_GUI_DISPLAY", "True").lower() in ("t
 # ============================================================
 # CAMERA & OFFLINE AI INFERENCE CONFIGURATION
 # ============================================================
-# Prioritize external USB camera (index 1) over laptop webcam (index 0)
-PREFERRED_CAMERA_INDEX = int(os.environ.get("CAMERA_INDEX", "1"))
-CAMERA_INDICES = [PREFERRED_CAMERA_INDEX, 0, 2] if PREFERRED_CAMERA_INDEX != 0 else [0, 1, 2]
+# On Linux/Pi, index 0 is /dev/video0. On Windows laptops with dual cams, index 1 is external USB.
+DEFAULT_CAM_IDX = "0" if os.name != "nt" else "1"
+PREFERRED_CAMERA_INDEX = int(os.environ.get("CAMERA_INDEX", DEFAULT_CAM_IDX))
+CAMERA_INDICES = [PREFERRED_CAMERA_INDEX, 0, 1, 2, 4] if PREFERRED_CAMERA_INDEX not in (0, 1) else ([0, 1, 2, 4] if PREFERRED_CAMERA_INDEX == 0 else [1, 0, 2, 4])
 
 CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "1280"))
 CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "720"))
