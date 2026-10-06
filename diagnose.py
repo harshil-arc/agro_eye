@@ -97,6 +97,7 @@ except Exception as e:
 # --- 6. Animal Intrusion YOLO Model Probe ---
 print("\n[Step 6/7] Probing Animal Intrusion AI Model (yolo11m.pt)...")
 try:
+    from ultralytics import YOLO
     from config import ANIMAL_MODEL_PATH
     print(f"  Model Path      : {ANIMAL_MODEL_PATH}")
     # Candidate search

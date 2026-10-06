@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
 
