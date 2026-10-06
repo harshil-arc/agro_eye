@@ -831,17 +831,23 @@ class PlantDetectionSystem:
 
 
 def main():
-    app = PlantDetectionSystem()
+    try:
+        app = PlantDetectionSystem()
 
-    def sig_handler(signum, frame):
-        logger.info(f"Signal {signum} received. Exiting...")
-        app.stop()
-        sys.exit(0)
+        def sig_handler(signum, frame):
+            logger.info(f"Signal {signum} received. Exiting...")
+            app.stop()
+            sys.exit(0)
 
-    signal.signal(signal.SIGINT, sig_handler)
-    signal.signal(signal.SIGTERM, sig_handler)
+        signal.signal(signal.SIGINT, sig_handler)
+        signal.signal(signal.SIGTERM, sig_handler)
 
-    app.start()
+        app.start()
+    except Exception as e:
+        import traceback
+        logger.critical(f"FATAL: Application terminated unexpectedly with error: {e}")
+        logger.critical(traceback.format_exc())
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
