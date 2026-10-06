@@ -200,7 +200,7 @@ class TestPlantSystem(unittest.TestCase):
             self.assertIsNone(parsed.get("mq135_raw"))
 
             # 2. Test parsing when soil moisture and DHT are connected
-            raw_line_with_sensors = '{"source":"esp32_sensor","temperature":26.5,"humidity":58.0,"soil_moisture":42.0,"soil_raw":2670,"mq135_raw":null,"mq135_voltage":null,"servo_angle":110,"servo_mode":"manual"}'
+            raw_line_with_sensors = '{"source":"esp32_sensor","temperature":26.5,"humidity":58.0,"soil_moisture":42.0,"soil_raw":2670,"mq135_raw":null,"mq135_voltage":null,"servo_angle":110,"servo_mode":"manual","hooter":"ON","relay_pin":26}'
             parsed2 = mgr.esp32_receiver._parse_line(raw_line_with_sensors)
             self.assertIsNotNone(parsed2)
             self.assertEqual(parsed2.get("temperature"), 26.5)
@@ -209,6 +209,11 @@ class TestPlantSystem(unittest.TestCase):
             self.assertIsNone(parsed2.get("mq135_raw"))
             self.assertEqual(parsed2.get("servo_angle"), 110)
             self.assertEqual(parsed2.get("servo_mode"), "manual")
+            self.assertEqual(parsed2.get("hooter"), "ON")
+
+            # 3. Test set_hooter function
+            mgr.set_hooter(True)
+            mgr.set_hooter(False)
         finally:
             mgr.stop()
 

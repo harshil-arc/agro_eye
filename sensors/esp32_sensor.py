@@ -155,7 +155,8 @@ class ESP32SensorReceiver:
                     "mq135_raw": None,
                     "mq135_voltage": None,
                     "servo_angle": None,
-                    "servo_mode": "auto"
+                    "servo_mode": "auto",
+                    "hooter": "OFF"
                 }
                 recognized = False
 
@@ -200,6 +201,9 @@ class ESP32SensorReceiver:
                         recognized = True
                     elif k_clean in ("servo_mode", "mode"):
                         parsed["servo_mode"] = str(val).lower() if val is not None else "auto"
+                        recognized = True
+                    elif k_clean in ("hooter", "hooter_active", "relay", "relay_state", "alarm"):
+                        parsed["hooter"] = "ON" if str(val).upper() in ("ON", "1", "TRUE", "LOW") else "OFF"
                         recognized = True
 
                 if recognized or raw_data.get("source") == "esp32_sensor":
@@ -256,7 +260,12 @@ class ESP32SensorReceiver:
         if mode_m:
             parsed["servo_mode"] = mode_m.group(1).lower()
 
-        if any(parsed.get(k) is not None for k in ("temperature", "humidity", "soil_moisture", "soil_raw", "mq135_raw", "mq135_voltage", "servo_angle")):
+        # Hooter / Relay State
+        hooter_m = re.search(r'(?:hooter|relay)\s*(?:state|active)?\s*[:=]?\s*\"?(on|off|true|false|1|0)\"?', raw_line, re.I)
+        if hooter_m:
+            parsed["hooter"] = "ON" if hooter_m.group(1).upper() in ("ON", "1", "TRUE") else "OFF"
+
+        if any(parsed.get(k) is not None for k in ("temperature", "humidity", "soil_moisture", "soil_raw", "mq135_raw", "mq135_voltage", "servo_angle", "hooter")):
             return parsed
 
         # Log unparsed text lines if printable and not empty
@@ -344,6 +353,16 @@ class ESP32SensorReceiver:
         """Sends a SERVO:<angle> command to ESP32 to position the camera servo."""
         clamped = max(0, min(180, int(angle)))
         return self.send_command(f"SERVO:{clamped}")
+
+    def set_hooter(self, state: bool) -> bool:
+        """
+        Controls the Active-LOW Hooter Relay connected to ESP32 GPIO 26 via USB Serial.
+        state=True  -> sends 'HOOTER:ON' (ESP32 drives GPIO 26 LOW to trip relay)
+        state=False -> sends 'HOOTER:OFF' (ESP32 drives GPIO 26 HIGH to de-energize relay)
+        """
+        cmd = "HOOTER:ON" if state else "HOOTER:OFF"
+        logger.info(f"ESP32 Relay Command: {cmd} (GPIO 26 -> {'LOW (ACTIVE)' if state else 'HIGH (INACTIVE)'})")
+        return self.send_command(cmd)
 
     def get_latest_readings(self) -> Optional[Dict[str, Any]]:
         """Returns the most recent genuine reading from the ESP32 stream if available."""

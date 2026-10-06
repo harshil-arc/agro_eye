@@ -130,6 +130,12 @@ class PlantDetectionSystem:
         self.last_sensor_alert_times: dict = {}
         self.sensor_alert_cooldown: float = 60.0
 
+        # Elephant-Specific Active-LOW Hooter Relay Control (ESP32 GPIO 26)
+        self.hooter_active: bool = False
+        self.last_elephant_seen_time: float = 0.0
+        self.consecutive_elephant_frames: int = 0
+        self.elephant_clear_delay: float = 4.0  # Seconds to keep hooter sounding after elephant exits frame
+
     def _ai_worker_loop(self):
         """
         High-Speed Decoupled AI Vision Worker Thread.
@@ -178,6 +184,28 @@ class PlantDetectionSystem:
                 else:
                     self.consecutive_animal_frames = 0
 
+                # 5. Handle Elephant-Specific Active-LOW Hooter Alarm (ESP32 GPIO 26)
+                is_elephant = False
+                if animal_result.has_animals:
+                    if "Elephant" in animal_result.counts or any(b.get("clean_name") == "elephant" for b in animal_result.boxes):
+                        is_elephant = True
+
+                if is_elephant and animal_result.top_confidence >= self.animal_detector.conf_thresh:
+                    self.consecutive_elephant_frames += 1
+                    if self.consecutive_elephant_frames >= 2:
+                        self.last_elephant_seen_time = time.time()
+                        if not self.hooter_active:
+                            self.hooter_active = True
+                            logger.warning("🐘 ELEPHANT DETECTED! Triggering Active-LOW Hooter Relay on ESP32 (GPIO 26 -> LOW)...")
+                            self.sensor_mgr.set_hooter(True)
+                else:
+                    self.consecutive_elephant_frames = 0
+                    # Auto-turn off hooter once elephant leaves the frame after clear delay
+                    if self.hooter_active and (time.time() - self.last_elephant_seen_time >= self.elephant_clear_delay):
+                        self.hooter_active = False
+                        logger.info("Elephant perimeter cleared. Deactivating Hooter Relay on ESP32 (GPIO 26 -> HIGH)...")
+                        self.sensor_mgr.set_hooter(False)
+
                 iter_count += 1
                 if iter_count % 120 == 0:
                     gc.collect()
@@ -211,9 +239,10 @@ class PlantDetectionSystem:
                 mq_str = f"{mq_val} ({sensor_data.get('mq135_voltage')}V)" if mq_val is not None else "NULL"
                 servo_mode = str(sensor_data.get('servo_mode', 'auto')).upper()
                 servo_str = f"{servo_val}° ({servo_mode})" if servo_val is not None else "NULL"
+                hooter_str = str(sensor_data.get('hooter', 'OFF')).upper()
                 conn_str = "ESP32 Connected" if sensor_data.get('is_connected') else "ESP32 Disconnected (Standby)"
 
-                logger.info(f"Sensors [{conn_str}] -> Temp: {t_str} | Hum: {h_str} | Soil: {soil_str} | Air: {mq_str} | Servo: {servo_str}")
+                logger.info(f"Sensors [{conn_str}] -> Temp: {t_str} | Hum: {h_str} | Soil: {soil_str} | Air: {mq_str} | Servo: {servo_str} | Hooter: {hooter_str}")
 
                 # Save to local SQLite database (buffered offline)
                 record_id = self.repo.insert_sensor_reading(sensor_data)
@@ -634,6 +663,12 @@ class PlantDetectionSystem:
             self.upload_executor.shutdown(wait=False)
         except Exception:
             pass
+
+        if self.hooter_active:
+            try:
+                self.sensor_mgr.set_hooter(False)
+            except Exception:
+                pass
 
         self.streamer.stop()
         self.servo.stop()

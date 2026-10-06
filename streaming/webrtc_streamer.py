@@ -188,10 +188,13 @@ class WebRTCStreamer:
             from aiortc import RTCRtpSender
             caps = RTCRtpSender.getCapabilities("video")
             if caps and caps.codecs:
-                # Prioritize H264 / VP8 for mobile playback
-                h264_vp8 = [c for c in caps.codecs if c.name.upper() in ("H264", "VP8")]
-                if h264_vp8:
-                    transceiver.setCodecPreferences(h264_vp8)
+                # Prioritize VP8 (universal baseline, zero SPS/PPS black screen issues) followed by H264
+                vp8_codecs = [c for c in caps.codecs if c.name.upper() == "VP8"]
+                h264_codecs = [c for c in caps.codecs if c.name.upper() == "H264"]
+                other_codecs = [c for c in caps.codecs if c.name.upper() not in ("VP8", "H264")]
+                preferred = vp8_codecs + h264_codecs + other_codecs
+                if preferred:
+                    transceiver.setCodecPreferences(preferred)
         except Exception:
             pass
 

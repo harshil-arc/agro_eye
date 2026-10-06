@@ -20,6 +20,10 @@ class SensorManager:
         """Sends servo position command to ESP32."""
         return self.esp32_receiver.send_servo_angle(angle)
 
+    def set_hooter(self, state: bool) -> bool:
+        """Sends Hooter relay state (ON/OFF) to ESP32 over USB Serial."""
+        return self.esp32_receiver.set_hooter(state)
+
     def read_all(self) -> Dict[str, Any]:
         """
         Polls ESP32 sensor stream and returns readings.
@@ -39,6 +43,7 @@ class SensorManager:
             "mq135_voltage": None,
             "servo_angle": None,
             "servo_mode": "auto",
+            "hooter": "OFF",
             "is_connected": False
         }
 
