@@ -96,6 +96,13 @@ class FirebaseWebRTCSignaling:
             logger.debug(f"REST POST error at /{path}: {e}")
         return False
 
+    def get_client_status(self) -> Optional[Dict[str, Any]]:
+        """Retrieves active client status (e.g. requesting_stream, disconnected)."""
+        status_data = self._get_node("client_status")
+        if status_data and isinstance(status_data, dict):
+            return status_data
+        return None
+
     def get_offer(self) -> Optional[Dict[str, Any]]:
         """Retrieves active SDP Offer from Farmer's app if present and pending."""
         offer_data = self._get_node("offer")
@@ -103,7 +110,7 @@ class FirebaseWebRTCSignaling:
             return offer_data
         return None
 
-    def send_answer(self, sdp: str, sdp_type: str = "answer") -> bool:
+    def send_answer(self, sdp: str, sdp_type: str = "answer", session_id: Optional[str] = None) -> bool:
         """Sends Raspberry Pi's generated SDP Answer to the cloud."""
         payload = {
             "sdp": sdp,
@@ -111,11 +118,18 @@ class FirebaseWebRTCSignaling:
             "timestamp": int(time.time() * 1000),
             "device": "Raspberry Pi (AgroEye)"
         }
+        if session_id:
+            payload["session_id"] = session_id
+            payload["sessionId"] = session_id
         return self._set_node("answer", payload)
 
-    def send_ice_candidate(self, candidate_dict: Dict[str, Any]) -> bool:
+    def send_ice_candidate(self, candidate_dict: Dict[str, Any], session_id: Optional[str] = None) -> bool:
         """Publishes a local Pi ICE candidate."""
-        return self._push_node("pi_candidates", candidate_dict)
+        payload = dict(candidate_dict)
+        if session_id and "session_id" not in payload:
+            payload["session_id"] = session_id
+            payload["sessionId"] = session_id
+        return self._push_node("pi_candidates", payload)
 
     def get_client_ice_candidates(self) -> List[Dict[str, Any]]:
         """Fetches ICE candidates uploaded by the Farmer's app."""
@@ -137,10 +151,15 @@ class FirebaseWebRTCSignaling:
         }
         self._set_node("status", data)
 
+    def clear_candidates(self):
+        """Clears stale ICE candidates for fresh reconnection."""
+        self._set_node("client_candidates", None)
+        self._set_node("pi_candidates", None)
+
     def clear_session(self):
         """Cleans up session signaling channel."""
         self._set_node("offer", None)
         self._set_node("answer", None)
-        self._set_node("pi_candidates", None)
         self._set_node("client_candidates", None)
+        self._set_node("pi_candidates", None)
         self.update_status("idle")

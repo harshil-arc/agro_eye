@@ -243,3 +243,50 @@ class RealtimeDatabaseManager:
         # 2. REST API Fallback
         return self._rest_put("camera_control", data)
 
+    def update_live_stream_metadata(self, device_id: str, data: Dict[str, Any]) -> bool:
+        """
+        Publishes stream playback metadata to Firebase Realtime Database at /live_stream/<device_id>.
+        Payload format:
+        {
+            "stream_url": "https://<cloud-video-server>/live/agroeye_01/index.m3u8",
+            "stream_status": "live",  # or "offline" / "standby"
+            "fps": 30,
+            "resolution": "1280x720" or "640x480",
+            "last_active": 1727820000000
+        }
+        """
+        node_path = f"live_stream/{device_id.strip('/')}"
+        
+        # 1. Try Firebase Admin SDK
+        if self.fb.is_ready or self.fb.initialize():
+            try:
+                from firebase_admin import db
+                ref = db.reference(node_path)
+                ref.set(data)
+                logger.info(f"Stream metadata published to Firebase /{node_path} (Admin SDK): status={data.get('stream_status')}")
+                return True
+            except Exception as e:
+                logger.debug(f"Admin SDK update_live_stream_metadata failed: {e}. Falling back to REST.")
+
+        # 2. REST API Fallback
+        success = self._rest_put(node_path, data)
+        if success:
+            logger.info(f"Stream metadata published to Firebase /{node_path} (REST): status={data.get('stream_status')}")
+        return success
+
+    def get_live_stream_metadata(self, device_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches current /live_stream/<device_id> metadata from Firebase."""
+        node_path = f"live_stream/{device_id.strip('/')}"
+        if self.fb.is_ready or self.fb.initialize():
+            try:
+                from firebase_admin import db
+                ref = db.reference(node_path)
+                val = ref.get()
+                if val and isinstance(val, dict):
+                    return val
+            except Exception as e:
+                logger.debug(f"Admin SDK get_live_stream_metadata failed: {e}. Falling back to REST.")
+
+        res = self._rest_get(node_path)
+        return res if isinstance(res, dict) else None
+

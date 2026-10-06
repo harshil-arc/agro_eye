@@ -157,5 +157,29 @@ class TestPlantSystem(unittest.TestCase):
         alert_mgr.trigger_disease_alert("Tomato_Leaf_Mold", 0.88)
         alert_mgr.send_latest_sensor_data()
 
+    def test_esp32_serial_parsing(self):
+        mgr = SensorManager()
+        try:
+            # 1. Test parsing when no sensors are connected (only servo telemetry)
+            raw_line_no_sensors = '{"source":"esp32_sensor","servo_angle":90,"servo_mode":"auto"}'
+            parsed = mgr.esp32_receiver._parse_line(raw_line_no_sensors)
+            self.assertIsNotNone(parsed)
+            self.assertEqual(parsed.get("servo_angle"), 90)
+            self.assertEqual(parsed.get("servo_mode"), "auto")
+            self.assertNotIn("soil_moisture", parsed)
+            self.assertNotIn("temperature", parsed)
+
+            # 2. Test parsing when soil moisture and DHT are connected
+            raw_line_with_sensors = '{"source":"esp32_sensor","temperature":26.5,"humidity":58.0,"soil_moisture":42.0,"soil_raw":2670,"servo_angle":110,"servo_mode":"manual"}'
+            parsed2 = mgr.esp32_receiver._parse_line(raw_line_with_sensors)
+            self.assertIsNotNone(parsed2)
+            self.assertEqual(parsed2.get("temperature"), 26.5)
+            self.assertEqual(parsed2.get("humidity"), 58.0)
+            self.assertEqual(parsed2.get("soil_moisture"), 42.0)
+            self.assertEqual(parsed2.get("servo_angle"), 110)
+            self.assertEqual(parsed2.get("servo_mode"), "manual")
+        finally:
+            mgr.stop()
+
 if __name__ == "__main__":
     unittest.main()

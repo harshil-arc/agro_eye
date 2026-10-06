@@ -34,11 +34,19 @@
 #define MQ135_PIN         35      // GPIO 35 (ADC1_CH7) for MQ-135 Air Quality
 #define SERVO_PIN         18      // GPIO 18 for Pan Servo PWM Control
 
-// ---------- Calibration (ESP32 12-bit ADC: 0 - 4095) ----------
-// In air (dry): ~3200 - 4095
-// In water (wet): ~1200 - 1600
-#define SOIL_DRY_RAW      3600
-#define SOIL_WET_RAW      1400
+// ---------- Calibration & Connection Thresholds (ESP32 12-bit ADC: 0 - 4095) ----------
+// Soil Moisture Sensor:
+// Disconnected / open circuit: raw < 300 (near 0)
+// In air (dry): ~3200 - 4095 (0% moisture)
+// In water (wet): ~1200 - 1600 (100% moisture)
+#define SOIL_DISCONNECTED_RAW  300
+#define SOIL_DRY_RAW           3600
+#define SOIL_WET_RAW           1400
+
+// MQ-135 Air Quality Sensor:
+// Disconnected / unpowered: raw < 100 (near 0.0V)
+// In clean ambient air: ~200 - 1500 (> 0.1V)
+#define MQ135_DISCONNECTED_RAW 100
 
 #if ENABLE_DHT
 DHT dht(DHTPIN, DHTTYPE);
@@ -82,7 +90,7 @@ void setup() {
   panServo.write(currentServoAngle);
 #endif
 
-  Serial.println("{\"status\":\"ESP32_READY\",\"baud\":115200}");
+  Serial.println("{\"status\":\"ESP32_READY\",\"baud\":115200,\"servo_angle\":90}");
   Serial.flush();
 }
 
@@ -150,7 +158,7 @@ void readAndTransmitTelemetry() {
   for (int attempt = 0; attempt < 3; attempt++) {
     humidity = dht.readHumidity();
     temperature = dht.readTemperature();
-    if (!isnan(humidity) && !isnan(temperature) && humidity > 0.0) {
+    if (!isnan(humidity) && !isnan(temperature) && humidity > 0.0 && temperature > -40.0 && temperature < 85.0) {
       dhtValid = true;
       break;
     }
@@ -161,19 +169,29 @@ void readAndTransmitTelemetry() {
   // 2. Read Soil Moisture (Analog GPIO 34)
   int soilRaw = 0;
   float soilPercent = 0.0;
+  bool soilValid = false;
 #if ENABLE_SOIL
   soilRaw = analogRead(SOIL_PIN);
-  soilPercent = ((float)(SOIL_DRY_RAW - soilRaw) / (float)(SOIL_DRY_RAW - SOIL_WET_RAW)) * 100.0;
-  if (soilPercent < 0.0) soilPercent = 0.0;
-  if (soilPercent > 100.0) soilPercent = 100.0;
+  // Sensor is considered physically connected when raw reading is >= SOIL_DISCONNECTED_RAW
+  if (soilRaw >= SOIL_DISCONNECTED_RAW) {
+    soilValid = true;
+    soilPercent = ((float)(SOIL_DRY_RAW - soilRaw) / (float)(SOIL_DRY_RAW - SOIL_WET_RAW)) * 100.0;
+    if (soilPercent < 0.0) soilPercent = 0.0;
+    if (soilPercent > 100.0) soilPercent = 100.0;
+  }
 #endif
 
   // 3. Read MQ-135 Air Quality (Analog GPIO 35)
   int mqRaw = 0;
   float mqVoltage = 0.0;
+  bool mqValid = false;
 #if ENABLE_MQ135
   mqRaw = analogRead(MQ135_PIN);
   mqVoltage = (mqRaw / 4095.0) * 3.3; // ESP32 ADC reference is 3.3V
+  // MQ-135 is considered physically connected when raw reading is >= MQ135_DISCONNECTED_RAW
+  if (mqRaw >= MQ135_DISCONNECTED_RAW) {
+    mqValid = true;
+  }
 #endif
 
   // 4. Output Clean JSON Line to USB Serial
@@ -187,17 +205,29 @@ void readAndTransmitTelemetry() {
   }
 
 #if ENABLE_SOIL
-  Serial.print(",\"soil_moisture\":");
-  Serial.print(soilPercent, 1);
-  Serial.print(",\"soil_raw\":");
-  Serial.print(soilRaw);
+  if (soilValid) {
+    Serial.print(",\"soil_moisture\":");
+    Serial.print(soilPercent, 1);
+    Serial.print(",\"soil_raw\":");
+    Serial.print(soilRaw);
+  }
 #endif
 
 #if ENABLE_MQ135
-  Serial.print(",\"mq135_raw\":");
-  Serial.print(mqRaw);
-  Serial.print(",\"mq135_voltage\":");
-  Serial.print(mqVoltage, 2);
+  if (mqValid) {
+    Serial.print(",\"mq135_raw\":");
+    Serial.print(mqRaw);
+    Serial.print(",\"mq135_voltage\":");
+    Serial.print(mqVoltage, 2);
+  }
+#endif
+
+#if ENABLE_SERVO
+  Serial.print(",\"servo_angle\":");
+  Serial.print(currentServoAngle);
+  Serial.print(",\"servo_mode\":\"");
+  Serial.print(isManualMode ? "manual" : "auto");
+  Serial.print("\"");
 #endif
 
   Serial.println("}");

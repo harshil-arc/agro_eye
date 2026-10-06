@@ -58,6 +58,16 @@ class OpenCVVideoTrack(VideoStreamTrack):
             self._latest_frame = frame_resized
             self._last_frame_time = time.time()
 
+    def stop(self):
+        """Stops the video track and releases any track-specific resources."""
+        if AIORTC_AVAILABLE and hasattr(super(), "stop"):
+            try:
+                super().stop()
+            except Exception:
+                pass
+        with self._lock:
+            self._latest_frame = None
+
     async def recv(self):
         """
         Pulls next frame on WebRTC clock cadence with sub-50ms latency.

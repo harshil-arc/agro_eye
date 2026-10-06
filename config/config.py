@@ -36,9 +36,9 @@ ENABLE_GUI_DISPLAY = os.environ.get("ENABLE_GUI_DISPLAY", "True").lower() in ("t
 PREFERRED_CAMERA_INDEX = int(os.environ.get("CAMERA_INDEX", "1"))
 CAMERA_INDICES = [PREFERRED_CAMERA_INDEX, 0, 2] if PREFERRED_CAMERA_INDEX != 0 else [0, 1, 2]
 
-CAMERA_WIDTH = 640
-CAMERA_HEIGHT = 480
-ROI_SIZE = 360
+CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "1280"))
+CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "720"))
+ROI_SIZE = int(os.environ.get("ROI_SIZE", "480"))
 
 # 100% Offline YOLOv8 Plant Disease Model
 YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH", str(BASE_DIR / "models" / "disease_model.pt"))
@@ -105,6 +105,7 @@ MAX_FIREBASE_SNAPSHOTS = int(os.environ.get("MAX_FIREBASE_SNAPSHOTS", "200"))
 # ============================================================
 # LORA MODULE CONFIGURATION (Raspberry Pi 5 loralibPi5)
 # ============================================================
+ENABLE_LORA = os.environ.get("ENABLE_LORA", "True").lower() in ("true", "1", "yes")
 LORA_FREQUENCY = int(os.environ.get("LORA_FREQ", "433000000"))  # 433 MHz
 LORA_SPREADING_FACTOR = int(os.environ.get("LORA_SF", "7"))
 LORA_BANDWIDTH = int(os.environ.get("LORA_BW", "125"))          # 125 kHz
@@ -120,36 +121,72 @@ SQLITE_DB_PATH = str(DATA_DIR / "plant_system.db")
 SYNC_INTERVAL = 10.0  # seconds to retry flushing offline buffer to Firebase
 
 # ============================================================
-# WEBRTC LIVE VIDEO STREAMING CONFIGURATION
+# OUTBOUND SRT LIVE VIDEO STREAMING CONFIGURATION (Pi -> Cloud VPS / Media Server)
 # ============================================================
 ENABLE_STREAMING = os.environ.get("ENABLE_STREAMING", "True").lower() in ("true", "1", "yes")
+
+# Outgoing SRT Media Server Destination (e.g. srt://vps.example.com:6000 or srt://1.2.3.4:8890)
+SRT_SERVER_URL = os.environ.get("SRT_SERVER_URL", "srt://127.0.0.1:6000")
+SRT_STREAM_ID = os.environ.get("SRT_STREAM_ID", "publish/live/agroeye")
+SRT_LATENCY_MS = int(os.environ.get("SRT_LATENCY_MS", "120"))  # Ultra-low latency buffer (ms)
+SRT_RECONNECT_DELAY = float(os.environ.get("SRT_RECONNECT_DELAY", "3.0"))  # Seconds to retry on disconnect
+
+# Stream Resolution, FPS and Encoding Bitrate
 STREAM_FPS = int(os.environ.get("STREAM_FPS", "30"))
-STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
-STREAM_HEIGHT = int(os.environ.get("STREAM_HEIGHT", "480"))
-WEBRTC_DEVICE_ID = os.environ.get("WEBRTC_DEVICE_ID", "pi_agroeye_01")
+STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "1280"))
+STREAM_HEIGHT = int(os.environ.get("STREAM_HEIGHT", "720"))
+STREAM_BITRATE = os.environ.get("STREAM_BITRATE", "2000k")
+
+# Cloud Media Server / HLS Playback URL for Mobile App
+STREAM_DEVICE_ID = os.environ.get("STREAM_DEVICE_ID", os.environ.get("WEBRTC_DEVICE_ID", "pi_agroeye_01"))
+HLS_STREAM_URL = os.environ.get("HLS_STREAM_URL", os.environ.get("LIVE_STREAM_URL", "https://your-cloud-video-server/live/agroeye_01/index.m3u8"))
+LIVE_STREAM_NODE_PATH = f"live_stream/{STREAM_DEVICE_ID}"
+
+WEBRTC_DEVICE_ID = STREAM_DEVICE_ID
 WEBRTC_SESSION_PATH = f"webrtc_sessions/{WEBRTC_DEVICE_ID}"
 
-
-# STUN & TURN ICE Servers for NAT/Firewall Traversal (Pi -> Internet -> Farmer App)
 STUN_SERVERS = [
     "stun:stun.l.google.com:19302",
     "stun:stun1.l.google.com:19302",
     "stun:stun2.l.google.com:19302",
     "stun:stun3.l.google.com:19302",
-    "stun:stun4.l.google.com:19302"
+    "stun:stun4.l.google.com:19302",
+    "stun:stun.cloudflare.com:3478",
+    "stun:stun.services.mozilla.com:3478"
 ]
 
 TURN_SERVERS_CONFIG = [
-    {"urls": "turn:openrelay.metered.ca:80", "username": "openrelayproject", "credential": "openrelayproject"},
-    {"urls": "turn:openrelay.metered.ca:443", "username": "openrelayproject", "credential": "openrelayproject"},
-    {"urls": "turn:openrelay.metered.ca:443?transport=tcp", "username": "openrelayproject", "credential": "openrelayproject"},
-    {"urls": "turn:global.relay.metered.ca:80", "username": "openrelayproject", "credential": "openrelayproject"},
-    {"urls": "turn:global.relay.metered.ca:443", "username": "openrelayproject", "credential": "openrelayproject"},
-    {"urls": "turn:global.relay.metered.ca:443?transport=tcp", "username": "openrelayproject", "credential": "openrelayproject"}
+    {
+        "urls": ["turn:openrelay.metered.ca:80"],
+        "username": "openrelayproject",
+        "credential": "openrelayproject"
+    },
+    {
+        "urls": ["turn:openrelay.metered.ca:443"],
+        "username": "openrelayproject",
+        "credential": "openrelayproject"
+    },
+    {
+        "urls": ["turn:openrelay.metered.ca:443?transport=tcp"],
+        "username": "openrelayproject",
+        "credential": "openrelayproject"
+    },
+    {
+        "urls": ["turn:global.relay.metered.ca:80"],
+        "username": "openrelayproject",
+        "credential": "openrelayproject"
+    },
+    {
+        "urls": ["turn:global.relay.metered.ca:443"],
+        "username": "openrelayproject",
+        "credential": "openrelayproject"
+    },
+    {
+        "urls": ["turn:global.relay.metered.ca:443?transport=tcp"],
+        "username": "openrelayproject",
+        "credential": "openrelayproject"
+    }
 ]
 
-TURN_URL = os.environ.get("TURN_URL", "turn:openrelay.metered.ca:80")
-TURN_USERNAME = os.environ.get("TURN_USERNAME", "openrelayproject")
-TURN_CREDENTIAL = os.environ.get("TURN_CREDENTIAL", "openrelayproject")
 
 

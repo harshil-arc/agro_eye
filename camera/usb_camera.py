@@ -117,7 +117,7 @@ class USBCamera:
                             self.consecutive_errors = 0
                             self._logged_no_cam = False
                             cam_type = "USB External Webcam" if camera_index == 1 else f"Camera Device {camera_index}"
-                            logger.info(f"High-Speed Camera opened at index {camera_index} ({cam_type}, Backend: {backend})")
+                            logger.info(f"📷 Camera connected (Index {camera_index} - {cam_type}, {self.width}x{self.height} @ 30 FPS)")
                             
                             # Start background capture thread
                             self._running = True

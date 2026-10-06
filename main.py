@@ -79,7 +79,7 @@ class PlantDetectionSystem:
         # 3. Sensors
         self.sensor_mgr = SensorManager()
 
-        # 4. Cloud, LoRa & WebRTC Live Streaming
+        # 4. Cloud, LoRa & Outbound WebRTC Live Streaming (Pi <-> Farmer App via Firebase Signaling)
         self.rtdb = RealtimeDatabaseManager()
         self.storage = StorageUploader()
         self.lora = LoRaAlertManager()
@@ -106,8 +106,16 @@ class PlantDetectionSystem:
         self.latest_animal_result: AnimalDetectionResult = AnimalDetectionResult()
         self.ai_lock = threading.Lock()
 
-        is_display_available = (os.name == "nt") or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-        self.gui_available = ENABLE_GUI_DISPLAY and is_display_available
+        # Display & Monitor Auto-Configuration for Linux / Raspberry Pi Desktop
+        if os.name != "nt" and ENABLE_GUI_DISPLAY:
+            if "DISPLAY" not in os.environ and "WAYLAND_DISPLAY" not in os.environ:
+                os.environ["DISPLAY"] = ":0"
+            if "XDG_RUNTIME_DIR" not in os.environ:
+                user_id = os.getuid() if hasattr(os, "getuid") else 1000
+                if os.path.exists(f"/run/user/{user_id}"):
+                    os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{user_id}"
+
+        self.gui_available = ENABLE_GUI_DISPLAY
 
         self.last_sensor_time: float = 0.0
         self.latest_sensor_data: dict = {}
@@ -203,7 +211,9 @@ class PlantDetectionSystem:
                 h_str = f"{sensor_data.get('humidity')}%" if sensor_data.get('humidity') is not None else "N/C"
                 soil_str = f"{sensor_data.get('soil_moisture')}%" if sensor_data.get('soil_moisture') is not None else "N/C"
                 mq_str = f"{sensor_data.get('mq135_raw')} ({sensor_data.get('mq135_voltage')}V)" if sensor_data.get('mq135_raw') is not None else "N/C"
-                logger.info(f"Sensors -> Temp: {t_str} | Hum: {h_str} | Soil: {soil_str} | Air Quality: {mq_str}")
+                servo_mode = str(sensor_data.get('servo_mode', 'auto')).upper()
+                servo_str = f"{sensor_data.get('servo_angle')}° ({servo_mode})" if sensor_data.get('servo_angle') is not None else "N/C"
+                logger.info(f"Sensors -> Temp: {t_str} | Hum: {h_str} | Soil: {soil_str} | Air: {mq_str} | Servo: {servo_str}")
 
                 # Save to local SQLite database (strictly buffered offline)
                 record_id = self.repo.insert_sensor_reading(sensor_data)
@@ -471,7 +481,7 @@ class PlantDetectionSystem:
         sensor_thread = threading.Thread(target=self._sensor_loop, daemon=True)
         sensor_thread.start()
 
-        # 3. Start WebRTC Live Video Streaming Engine (Pi -> Internet -> Farmer App)
+        # 3. Start Outbound SRT Live Video Streaming Engine (Pi -> Cloud VPS / Media Server)
         self.streamer.start()
 
         # 4. Open High-Speed USB Camera
@@ -486,12 +496,20 @@ class PlantDetectionSystem:
         # 6. Start Dual-Mode PTZ Camera Servo Engine (Auto Sweep & Mobile App Manual Direction)
         self.servo.start()
 
+        # 7. Initialize Local Desktop Camera Live Monitor Window
+        if self.gui_available:
+            try:
+                cv2.namedWindow("AgroEye - Plant Disease & Animal Intrusion Monitor", cv2.WINDOW_AUTOSIZE)
+                logger.info("🖥️ Local Camera Live Monitor Window initialized on display.")
+            except Exception as e:
+                logger.warning(f"Local GUI window init skipped ({e}). Running in headless SRT streaming mode.")
+                self.gui_available = False
+
         logger.info("\n=======================================================")
         logger.info(" System Active - Dual Vision AI (Plant + Animal Detection)")
-        logger.info(" Plant Disease Model : 100% Offline (models/disease_model.pt)")
-        logger.info(" Animal AI Model     : Wildlife & Intrusion Guard")
-        logger.info(" LoRa Transmitter    : 433 MHz / SF7 / BW125")
-        logger.info(" Streaming Engine    : WebRTC Ultra-Low Latency (25-30 FPS)")
+        lora_status = "433 MHz / SF7 / BW125 (Active)" if (hasattr(self.lora, 'lora') and self.lora.lora.is_ready) else "Standby / Not Connected"
+        logger.info(f" LoRa Transmitter    : {lora_status}")
+        logger.info(" Live Video Pipeline : WebRTC (1280x720 @ 30 FPS / H.264 / VP8 via Firebase Signaling)")
         logger.info(" Camera PTZ Servo    : ESP32 Hardware Driven (GPIO 18) / USB Serial")
         logger.info(" Controls: [Q] Quit | [C] Cam | [S] Save | [H] HUD | [A] Animal AI | [+/-] Sens")
         logger.info("=======================================================\n")
@@ -542,7 +560,8 @@ class PlantDetectionSystem:
                     h = self.latest_sensor_data.get('humidity', '--')
                     m = self.latest_sensor_data.get('soil_moisture', '--')
                     mq = self.latest_sensor_data.get('mq135_raw', '--')
-                    sensor_text = f"Sensors: T:{t}C  H:{h}%  Soil:{m}%  Air:{mq}"
+                    srv = self.latest_sensor_data.get('servo_angle', '--')
+                    sensor_text = f"Sensors: T:{t}C  H:{h}%  Soil:{m}%  Air:{mq}  Pan:{srv}°"
 
                 # Generate Annotated Frame with AI Bounding Boxes & Sensor HUD (Runs at 25-30 FPS)
                 annotated = self.detector.draw_hud(

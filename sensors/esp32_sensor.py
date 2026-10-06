@@ -154,8 +154,15 @@ class ESP32SensorReceiver:
                         parsed["mq135_raw"] = val
                     elif k_clean in ("mq135_voltage", "mq_voltage", "voltage", "mq135_v", "air_voltage"):
                         parsed["mq135_voltage"] = val
+                    elif k_clean in ("servo_angle", "servo_pan", "servo_degree", "servo_deg", "pan_angle", "angle"):
+                        try:
+                            parsed["servo_angle"] = int(val) if val is not None else None
+                        except (ValueError, TypeError):
+                            parsed["servo_angle"] = val
+                    elif k_clean in ("servo_mode", "mode"):
+                        parsed["servo_mode"] = str(val).lower()
 
-                if any(parsed.get(k) is not None for k in ("temperature", "humidity", "soil_moisture", "soil_raw", "mq135_raw", "mq135_voltage")):
+                if any(parsed.get(k) is not None for k in ("temperature", "humidity", "soil_moisture", "soil_raw", "mq135_raw", "mq135_voltage", "servo_angle")):
                     return parsed
         except json.JSONDecodeError:
             pass
@@ -199,7 +206,17 @@ class ESP32SensorReceiver:
         if mq_v_m:
             parsed["mq135_voltage"] = float(mq_v_m.group(1))
 
-        if any(parsed.get(k) is not None for k in ("temperature", "humidity", "soil_moisture", "soil_raw", "mq135_raw", "mq135_voltage")):
+        # Servo Angle / Degree
+        servo_m = re.search(r'(?:servo\s*(?:angle|deg(?:ree)?|pan)?|angle|pan)\s*[:=]?\s*([0-9]+)', raw_line, re.I)
+        if servo_m:
+            parsed["servo_angle"] = int(servo_m.group(1))
+
+        # Servo Mode
+        mode_m = re.search(r'(?:servo\s*mode|mode)\s*[:=]?\s*(auto|manual)', raw_line, re.I)
+        if mode_m:
+            parsed["servo_mode"] = mode_m.group(1).lower()
+
+        if any(parsed.get(k) is not None for k in ("temperature", "humidity", "soil_moisture", "soil_raw", "mq135_raw", "mq135_voltage", "servo_angle")):
             return parsed
 
         # Log unparsed text lines if printable and not empty
@@ -229,7 +246,7 @@ class ESP32SensorReceiver:
 
                 if not connected:
                     now = time.time()
-                    if now - self.last_log_time >= 5.0:
+                    if now - self.last_log_time >= 15.0:
                         self.last_log_time = now
                         if self.last_error:
                             logger.warning(f"Could not connect to Arduino/ESP32 ({self.last_error}). Retrying...")
@@ -249,10 +266,9 @@ class ESP32SensorReceiver:
                 parsed_data = self._parse_line(line)
                 if parsed_data:
                     with self.lock:
-                        for k, v in parsed_data.items():
-                            if v is not None:
-                                self.latest_data[k] = v
-                        self.latest_data["source"] = "esp32_serial"
+                        new_data = {"source": "esp32_serial"}
+                        new_data.update(parsed_data)
+                        self.latest_data = new_data
                         self.last_received_time = time.time()
 
             except Exception as e:
