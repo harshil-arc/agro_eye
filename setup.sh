@@ -8,15 +8,19 @@ set -e
 echo "=== Updating System Packages ==="
 sudo apt-get update && sudo apt-get upgrade -y
 
-echo "=== Installing System Dependencies for OpenCV, I2C, SPI, and Serial ==="
+echo "=== Installing System Dependencies for OpenCV (GUI), I2C, SPI, and Serial ==="
 sudo apt-get install -y \
     python3-pip \
     python3-dev \
     python3-venv \
     python3-spidev \
+    python3-opencv \
     libatlas-base-dev \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
+    libgtk-3-dev \
+    libcanberra-gtk-module \
+    libcanberra-gtk3-module \
     i2c-tools \
     v4l-utils \
     spi-tools

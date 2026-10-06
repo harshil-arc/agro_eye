@@ -574,7 +574,12 @@ class PlantDetectionSystem:
                 cv2.waitKey(1)
                 logger.info("🖥️ Local Camera Live Monitor Window initialized on display.")
             except Exception as e:
-                logger.warning(f"Local GUI window init skipped ({e}). Running in headless streaming mode.")
+                err_str = str(e)
+                if "not implemented" in err_str.lower() or "headless" in err_str.lower():
+                    logger.warning("⚠️ OpenCV headless package detected in venv (GUI disabled). To enable the camera screen on the Pi, run:")
+                    logger.warning("   source venv/bin/activate && pip uninstall -y opencv-python-headless && pip install opencv-python")
+                else:
+                    logger.warning(f"Local GUI window init skipped ({e}). Running in headless streaming mode.")
                 self.gui_available = False
 
         logger.info("\n=======================================================")
