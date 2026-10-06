@@ -49,17 +49,24 @@ class ESP32SensorReceiver:
         # Linux/Pi glob scan for USB serial devices
         if os.name != "nt":
             import glob
-            for pattern in ["/dev/ttyUSB*", "/dev/ttyACM*", "/dev/serial/by-id/*"]:
+            for pattern in [
+                "/dev/ttyUSB*",
+                "/dev/ttyACM*",
+                "/dev/serial/by-id/*",
+                "/dev/serial/by-path/*",
+                "/dev/ttyAMA*"
+            ]:
                 for dev in glob.glob(pattern):
                     if dev not in ports_list:
                         ports_list.append(dev)
 
         # Prioritize preferred port if available
-        if self.preferred_port and self.preferred_port in ports_list:
-            ports_list.remove(self.preferred_port)
-            ports_list.insert(0, self.preferred_port)
-        elif self.preferred_port and not ports_list:
-            ports_list.append(self.preferred_port)
+        if self.preferred_port:
+            if self.preferred_port in ports_list:
+                ports_list.remove(self.preferred_port)
+                ports_list.insert(0, self.preferred_port)
+            elif not ports_list:
+                ports_list.append(self.preferred_port)
 
         return ports_list
 
@@ -116,7 +123,7 @@ class ESP32SensorReceiver:
         logger.info("Arduino/ESP32 Serial receiver stopped.")
 
     def _parse_line(self, raw_line: str) -> Optional[Dict[str, Any]]:
-        """Parses a serial line using JSON or Regex Key-Value extraction."""
+        """Parses a serial line using JSON or Regex Key-Value extraction, supporting null/None sensor values."""
         # Silently skip divider and banner lines
         if re.match(r'^[-\s=_*#]{3,}$', raw_line):
             return None
@@ -130,39 +137,72 @@ class ESP32SensorReceiver:
         try:
             raw_data = json.loads(raw_line)
             if isinstance(raw_data, dict):
-                if "status" in raw_data and not any(k in raw_data for k in ("temp", "temperature", "hum", "humidity")):
+                # Status banner check (only if no source or data keys)
+                if "status" in raw_data and "source" not in raw_data and not any(k in raw_data for k in ("temp", "temperature", "hum", "humidity", "soil", "soil_moisture", "mq", "mq135_raw")):
                     logger.info(f"Arduino/ESP32 status message: {raw_data['status']}")
+                    if "servo_angle" in raw_data:
+                        try:
+                            return {"servo_angle": int(raw_data["servo_angle"])}
+                        except Exception:
+                            pass
                     return None
 
-                parsed = {}
+                parsed: Dict[str, Any] = {
+                    "temperature": None,
+                    "humidity": None,
+                    "soil_moisture": None,
+                    "soil_raw": None,
+                    "mq135_raw": None,
+                    "mq135_voltage": None,
+                    "servo_angle": None,
+                    "servo_mode": "auto"
+                }
+                recognized = False
+
                 for k, v in raw_data.items():
                     k_clean = k.lower().replace(" ", "_").replace("-", "_")
-                    try:
-                        val = float(v) if v is not None else None
-                    except (ValueError, TypeError):
-                        val = v
+                    val = None
+                    if v is not None:
+                        try:
+                            val = float(v)
+                        except (ValueError, TypeError):
+                            val = v
 
                     if k_clean in ("temperature", "temp", "t", "temp_c"):
                         parsed["temperature"] = val
+                        recognized = True
                     elif k_clean in ("humidity", "hum", "h", "rh"):
                         parsed["humidity"] = val
+                        recognized = True
                     elif k_clean in ("soil_moisture", "soil", "moisture", "sm", "soilmoisture"):
                         parsed["soil_moisture"] = val
+                        recognized = True
                     elif k_clean in ("soil_raw", "soilraw", "raw_soil"):
-                        parsed["soil_raw"] = val
+                        try:
+                            parsed["soil_raw"] = int(val) if val is not None else None
+                        except (ValueError, TypeError):
+                            parsed["soil_raw"] = val
+                        recognized = True
                     elif k_clean in ("mq135_raw", "mq135", "air", "air_quality", "gas", "mq", "airquality"):
-                        parsed["mq135_raw"] = val
+                        try:
+                            parsed["mq135_raw"] = int(val) if val is not None else None
+                        except (ValueError, TypeError):
+                            parsed["mq135_raw"] = val
+                        recognized = True
                     elif k_clean in ("mq135_voltage", "mq_voltage", "voltage", "mq135_v", "air_voltage"):
                         parsed["mq135_voltage"] = val
+                        recognized = True
                     elif k_clean in ("servo_angle", "servo_pan", "servo_degree", "servo_deg", "pan_angle", "angle"):
                         try:
                             parsed["servo_angle"] = int(val) if val is not None else None
                         except (ValueError, TypeError):
                             parsed["servo_angle"] = val
+                        recognized = True
                     elif k_clean in ("servo_mode", "mode"):
-                        parsed["servo_mode"] = str(val).lower()
+                        parsed["servo_mode"] = str(val).lower() if val is not None else "auto"
+                        recognized = True
 
-                if any(parsed.get(k) is not None for k in ("temperature", "humidity", "soil_moisture", "soil_raw", "mq135_raw", "mq135_voltage", "servo_angle")):
+                if recognized or raw_data.get("source") == "esp32_sensor":
                     return parsed
         except json.JSONDecodeError:
             pass

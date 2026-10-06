@@ -30,16 +30,15 @@ class LoRaAlertManager:
         """
         Broadcasts sensor telemetry packet over LoRa.
         Includes live sensor metrics + recent disease status.
+        If sensors are disconnected, fields contain None/null values.
         """
         row = direct_data
-        if not row:
+        if row is None:
             recent = get_latest_sensor_readings(limit=1)
             if recent:
                 row = recent[0]
-
-        if not row:
-            logger.debug("LoRa: No sensor entries to transmit.")
-            return False
+            else:
+                row = {}
 
         payload = {
             "type": "SENSOR",

@@ -202,6 +202,8 @@ void readAndTransmitTelemetry() {
     Serial.print(temperature, 1);
     Serial.print(",\"humidity\":");
     Serial.print(humidity, 1);
+  } else {
+    Serial.print(",\"temperature\":null,\"humidity\":null");
   }
 
 #if ENABLE_SOIL
@@ -210,7 +212,11 @@ void readAndTransmitTelemetry() {
     Serial.print(soilPercent, 1);
     Serial.print(",\"soil_raw\":");
     Serial.print(soilRaw);
+  } else {
+    Serial.print(",\"soil_moisture\":null,\"soil_raw\":null");
   }
+#else
+  Serial.print(",\"soil_moisture\":null,\"soil_raw\":null");
 #endif
 
 #if ENABLE_MQ135
@@ -219,7 +225,11 @@ void readAndTransmitTelemetry() {
     Serial.print(mqRaw);
     Serial.print(",\"mq135_voltage\":");
     Serial.print(mqVoltage, 2);
+  } else {
+    Serial.print(",\"mq135_raw\":null,\"mq135_voltage\":null");
   }
+#else
+  Serial.print(",\"mq135_raw\":null,\"mq135_voltage\":null");
 #endif
 
 #if ENABLE_SERVO
@@ -228,6 +238,8 @@ void readAndTransmitTelemetry() {
   Serial.print(",\"servo_mode\":\"");
   Serial.print(isManualMode ? "manual" : "auto");
   Serial.print("\"");
+#else
+  Serial.print(",\"servo_angle\":null,\"servo_mode\":null");
 #endif
 
   Serial.println("}");

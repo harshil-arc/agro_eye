@@ -148,11 +148,7 @@ WEBRTC_SESSION_PATH = f"webrtc_sessions/{WEBRTC_DEVICE_ID}"
 STUN_SERVERS = [
     "stun:stun.l.google.com:19302",
     "stun:stun1.l.google.com:19302",
-    "stun:stun2.l.google.com:19302",
-    "stun:stun3.l.google.com:19302",
-    "stun:stun4.l.google.com:19302",
-    "stun:stun.cloudflare.com:3478",
-    "stun:stun.services.mozilla.com:3478"
+    "stun:stun.cloudflare.com:3478"
 ]
 
 TURN_SERVERS_CONFIG = [
@@ -168,21 +164,6 @@ TURN_SERVERS_CONFIG = [
     },
     {
         "urls": ["turn:openrelay.metered.ca:443?transport=tcp"],
-        "username": "openrelayproject",
-        "credential": "openrelayproject"
-    },
-    {
-        "urls": ["turn:global.relay.metered.ca:80"],
-        "username": "openrelayproject",
-        "credential": "openrelayproject"
-    },
-    {
-        "urls": ["turn:global.relay.metered.ca:443"],
-        "username": "openrelayproject",
-        "credential": "openrelayproject"
-    },
-    {
-        "urls": ["turn:global.relay.metered.ca:443?transport=tcp"],
         "username": "openrelayproject",
         "credential": "openrelayproject"
     }

@@ -90,7 +90,15 @@ class TestPlantSystem(unittest.TestCase):
     def test_sensor_manager_direct_data(self):
         mgr = SensorManager()
         try:
-            # Simulate receiving genuine reading from ESP32
+            # 1. Test when ESP32 is not connected / no data yet -> returns dictionary with NULL values (never None)
+            null_readings = mgr.read_all()
+            self.assertIsNotNone(null_readings)
+            self.assertIsNone(null_readings["temperature"])
+            self.assertIsNone(null_readings["humidity"])
+            self.assertIsNone(null_readings["soil_moisture"])
+            self.assertFalse(null_readings["is_connected"])
+
+            # 2. Simulate receiving genuine reading from ESP32
             with mgr.esp32_receiver.lock:
                 mgr.esp32_receiver.latest_data = {
                     "source": "esp32_serial",
@@ -103,6 +111,7 @@ class TestPlantSystem(unittest.TestCase):
                 }
             readings = mgr.read_all()
             self.assertIsNotNone(readings)
+            self.assertTrue(readings["is_connected"])
             self.assertEqual(readings["temperature"], 27.2)
             self.assertEqual(readings["humidity"], 61.5)
             self.assertEqual(readings["soil_moisture"], 52.0)
@@ -123,6 +132,16 @@ class TestPlantSystem(unittest.TestCase):
             alerts = mgr.check_alerts(test_data)
             self.assertIn("SOIL_DRY:15.0%", alerts)
             self.assertIn("POOR_AIR_QUALITY_MQ135:3500", alerts)
+
+            # Test that NULL sensor data generates no false alerts
+            null_data = {
+                "temperature": None,
+                "humidity": None,
+                "soil_moisture": None,
+                "mq135_raw": None
+            }
+            null_alerts = mgr.check_alerts(null_data)
+            self.assertEqual(len(null_alerts), 0)
         finally:
             mgr.stop()
 
@@ -155,27 +174,39 @@ class TestPlantSystem(unittest.TestCase):
         alert_mgr = LoRaAlertManager(cooldown=0.1)
         # Should return boolean without crashing
         alert_mgr.trigger_disease_alert("Tomato_Leaf_Mold", 0.88)
-        alert_mgr.send_latest_sensor_data()
+        # Test sending with NULL sensor dictionary
+        null_sensor_dict = {
+            "temperature": None,
+            "humidity": None,
+            "soil_moisture": None,
+            "soil_raw": None,
+            "mq135_raw": None,
+            "mq135_voltage": None
+        }
+        alert_mgr.send_latest_sensor_data(null_sensor_dict)
 
     def test_esp32_serial_parsing(self):
         mgr = SensorManager()
         try:
             # 1. Test parsing when no sensors are connected (only servo telemetry)
-            raw_line_no_sensors = '{"source":"esp32_sensor","servo_angle":90,"servo_mode":"auto"}'
+            raw_line_no_sensors = '{"source":"esp32_sensor","temperature":null,"humidity":null,"soil_moisture":null,"soil_raw":null,"mq135_raw":null,"mq135_voltage":null,"servo_angle":90,"servo_mode":"auto"}'
             parsed = mgr.esp32_receiver._parse_line(raw_line_no_sensors)
             self.assertIsNotNone(parsed)
             self.assertEqual(parsed.get("servo_angle"), 90)
             self.assertEqual(parsed.get("servo_mode"), "auto")
-            self.assertNotIn("soil_moisture", parsed)
-            self.assertNotIn("temperature", parsed)
+            self.assertIsNone(parsed.get("soil_moisture"))
+            self.assertIsNone(parsed.get("temperature"))
+            self.assertIsNone(parsed.get("humidity"))
+            self.assertIsNone(parsed.get("mq135_raw"))
 
             # 2. Test parsing when soil moisture and DHT are connected
-            raw_line_with_sensors = '{"source":"esp32_sensor","temperature":26.5,"humidity":58.0,"soil_moisture":42.0,"soil_raw":2670,"servo_angle":110,"servo_mode":"manual"}'
+            raw_line_with_sensors = '{"source":"esp32_sensor","temperature":26.5,"humidity":58.0,"soil_moisture":42.0,"soil_raw":2670,"mq135_raw":null,"mq135_voltage":null,"servo_angle":110,"servo_mode":"manual"}'
             parsed2 = mgr.esp32_receiver._parse_line(raw_line_with_sensors)
             self.assertIsNotNone(parsed2)
             self.assertEqual(parsed2.get("temperature"), 26.5)
             self.assertEqual(parsed2.get("humidity"), 58.0)
             self.assertEqual(parsed2.get("soil_moisture"), 42.0)
+            self.assertIsNone(parsed2.get("mq135_raw"))
             self.assertEqual(parsed2.get("servo_angle"), 110)
             self.assertEqual(parsed2.get("servo_mode"), "manual")
         finally:

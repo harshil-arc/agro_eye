@@ -259,13 +259,7 @@ class WebRTCStreamer:
             answer = await self.pc.createAnswer()
             await self.pc.setLocalDescription(answer)
 
-            # Wait for local STUN/TURN ICE candidates to gather into localDescription (up to 300ms)
-            for _ in range(15):
-                if current_pc.iceGatheringState == "complete":
-                    break
-                await asyncio.sleep(0.02)
-
-            # Send complete SDP answer containing gathered host & STUN/TURN candidates
+            # Send complete SDP answer immediately to begin connection handshake without delay
             self.signaling.send_answer(self.pc.localDescription.sdp, self.pc.localDescription.type, session_id=session_id)
             logger.info(f"📡 WebRTC: SDP Answer dispatched to Firebase Signaling Channel for session [{session_id}].")
 

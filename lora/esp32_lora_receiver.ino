@@ -77,11 +77,17 @@ const unsigned long debounceDelay = 50;
 // Cached Sensor Telemetry Data
 struct SensorData {
   float temp = 0.0;
+  bool temp_valid = false;
   float hum = 0.0;
+  bool hum_valid = false;
   float soil = 0.0;
+  bool soil_valid = false;
   int soil_raw = 0;
+  bool soil_raw_valid = false;
   int mq = 0;
+  bool mq_valid = false;
   float mq_v = 0.0;
+  bool mq_v_valid = false;
   String recent_disease = "None";
   float recent_conf = 0.0;
   String time_str = "--:--:--";
@@ -239,12 +245,24 @@ void processIncomingLoRa() {
 
       // A. Sensor Telemetry Packet (includes live metrics + recent disease status)
       if (strcmp(type, "SENSOR") == 0) {
-        latestSensors.temp = doc["temp"] | 0.0;
-        latestSensors.hum = doc["hum"] | 0.0;
-        latestSensors.soil = doc["soil"] | 0.0;
-        latestSensors.soil_raw = doc["soil_raw"] | 0;
-        latestSensors.mq = doc["mq"] | 0;
-        latestSensors.mq_v = doc["mq_v"] | 0.0;
+        latestSensors.temp_valid = !doc["temp"].isNull();
+        latestSensors.temp = latestSensors.temp_valid ? (float)doc["temp"] : 0.0;
+
+        latestSensors.hum_valid = !doc["hum"].isNull();
+        latestSensors.hum = latestSensors.hum_valid ? (float)doc["hum"] : 0.0;
+
+        latestSensors.soil_valid = !doc["soil"].isNull();
+        latestSensors.soil = latestSensors.soil_valid ? (float)doc["soil"] : 0.0;
+
+        latestSensors.soil_raw_valid = !doc["soil_raw"].isNull();
+        latestSensors.soil_raw = latestSensors.soil_raw_valid ? (int)doc["soil_raw"] : 0;
+
+        latestSensors.mq_valid = !doc["mq"].isNull();
+        latestSensors.mq = latestSensors.mq_valid ? (int)doc["mq"] : 0;
+
+        latestSensors.mq_v_valid = !doc["mq_v"].isNull();
+        latestSensors.mq_v = latestSensors.mq_v_valid ? (float)doc["mq_v"] : 0.0;
+
         latestSensors.time_str = String((const char*)(doc["time"] | "--:--:--"));
         latestSensors.rssi = rssi;
         latestSensors.snr = snr;
@@ -259,13 +277,36 @@ void processIncomingLoRa() {
         // Note: Routine sensor packets NEVER lock or reactivate the alert screen!
 
         Serial.print(F("[LORA] Telemetry: Temp:"));
-        Serial.print(latestSensors.temp, 1);
-        Serial.print(F("C | Hum:"));
-        Serial.print(latestSensors.hum, 1);
-        Serial.print(F("% | Soil:"));
-        Serial.print(latestSensors.soil, 1);
-        Serial.print(F("% | Air:"));
-        Serial.print(latestSensors.mq);
+        if (latestSensors.temp_valid) {
+          Serial.print(latestSensors.temp, 1);
+          Serial.print(F("C"));
+        } else {
+          Serial.print(F("NULL"));
+        }
+
+        Serial.print(F(" | Hum:"));
+        if (latestSensors.hum_valid) {
+          Serial.print(latestSensors.hum, 1);
+          Serial.print(F("%"));
+        } else {
+          Serial.print(F("NULL"));
+        }
+
+        Serial.print(F(" | Soil:"));
+        if (latestSensors.soil_valid) {
+          Serial.print(latestSensors.soil, 1);
+          Serial.print(F("%"));
+        } else {
+          Serial.print(F("NULL"));
+        }
+
+        Serial.print(F(" | Air:"));
+        if (latestSensors.mq_valid) {
+          Serial.print(latestSensors.mq);
+        } else {
+          Serial.print(F("NULL"));
+        }
+
         Serial.print(F(" | Disease:"));
         Serial.print(embedded_disease);
         Serial.print(F(" | RSSI:"));
@@ -415,24 +456,40 @@ void renderSensorScreen() {
     // Row 1: Temperature & Humidity
     display.setCursor(0, 14);
     display.print(F("Temp: "));
-    display.print(latestSensors.temp, 1);
-    display.print(F(" C"));
+    if (latestSensors.temp_valid) {
+      display.print(latestSensors.temp, 1);
+      display.print(F(" C"));
+    } else {
+      display.print(F("NULL"));
+    }
 
-    display.setCursor(78, 14);
+    display.setCursor(72, 14);
     display.print(F("H: "));
-    display.print((int)latestSensors.hum);
-    display.print(F("%"));
+    if (latestSensors.hum_valid) {
+      display.print((int)latestSensors.hum);
+      display.print(F("%"));
+    } else {
+      display.print(F("NULL"));
+    }
 
     // Row 2: Soil Moisture
     display.setCursor(0, 26);
-    display.print(F("Soil Moist: "));
-    display.print(latestSensors.soil, 1);
-    display.print(F("%"));
+    display.print(F("Soil: "));
+    if (latestSensors.soil_valid) {
+      display.print(latestSensors.soil, 1);
+      display.print(F("%"));
+    } else {
+      display.print(F("NULL"));
+    }
 
     // Row 3: Air Quality / Recent Disease
     display.setCursor(0, 38);
     display.print(F("Air: "));
-    display.print(latestSensors.mq);
+    if (latestSensors.mq_valid) {
+      display.print(latestSensors.mq);
+    } else {
+      display.print(F("NULL"));
+    }
 
     if (latestSensors.recent_disease.length() > 0 && latestSensors.recent_disease != "None") {
       display.setCursor(55, 38);

@@ -193,29 +193,29 @@ class PlantDetectionSystem:
     def _sensor_loop(self):
         """Background loop to periodically read sensors, save to DB, sync to Firebase, and broadcast over LoRa."""
         logger.info("Sensor monitoring thread started.")
-        last_wait_log = 0.0
         while self.running:
             try:
-                # Read genuine sensors from Arduino/ESP32 via USB
+                # Read sensors from Arduino/ESP32 via USB (returns NULL/None for disconnected sensors)
                 sensor_data = self.sensor_mgr.read_all()
-                if sensor_data is None:
-                    now = time.time()
-                    if now - last_wait_log >= 6.0:
-                        last_wait_log = now
-                        logger.info("Awaiting sensor telemetry from Arduino/ESP32...")
-                    time.sleep(SENSOR_POLL_INTERVAL)
-                    continue
-
                 self.latest_sensor_data = sensor_data
-                t_str = f"{sensor_data.get('temperature')}°C" if sensor_data.get('temperature') is not None else "N/C"
-                h_str = f"{sensor_data.get('humidity')}%" if sensor_data.get('humidity') is not None else "N/C"
-                soil_str = f"{sensor_data.get('soil_moisture')}%" if sensor_data.get('soil_moisture') is not None else "N/C"
-                mq_str = f"{sensor_data.get('mq135_raw')} ({sensor_data.get('mq135_voltage')}V)" if sensor_data.get('mq135_raw') is not None else "N/C"
-                servo_mode = str(sensor_data.get('servo_mode', 'auto')).upper()
-                servo_str = f"{sensor_data.get('servo_angle')}° ({servo_mode})" if sensor_data.get('servo_angle') is not None else "N/C"
-                logger.info(f"Sensors -> Temp: {t_str} | Hum: {h_str} | Soil: {soil_str} | Air: {mq_str} | Servo: {servo_str}")
 
-                # Save to local SQLite database (strictly buffered offline)
+                t_val = sensor_data.get('temperature')
+                h_val = sensor_data.get('humidity')
+                soil_val = sensor_data.get('soil_moisture')
+                mq_val = sensor_data.get('mq135_raw')
+                servo_val = sensor_data.get('servo_angle')
+
+                t_str = f"{t_val}°C" if t_val is not None else "NULL"
+                h_str = f"{h_val}%" if h_val is not None else "NULL"
+                soil_str = f"{soil_val}%" if soil_val is not None else "NULL"
+                mq_str = f"{mq_val} ({sensor_data.get('mq135_voltage')}V)" if mq_val is not None else "NULL"
+                servo_mode = str(sensor_data.get('servo_mode', 'auto')).upper()
+                servo_str = f"{servo_val}° ({servo_mode})" if servo_val is not None else "NULL"
+                conn_str = "ESP32 Connected" if sensor_data.get('is_connected') else "ESP32 Disconnected (Standby)"
+
+                logger.info(f"Sensors [{conn_str}] -> Temp: {t_str} | Hum: {h_str} | Soil: {soil_str} | Air: {mq_str} | Servo: {servo_str}")
+
+                # Save to local SQLite database (buffered offline)
                 record_id = self.repo.insert_sensor_reading(sensor_data)
 
                 # 1. Update Firebase Live Status
@@ -234,7 +234,7 @@ class PlantDetectionSystem:
                     # Release local synced sensor record
                     self.repo.delete_synced_sensor_reading(record_id)
 
-                # 3. Broadcast newest sensor reading over LoRa to ESP32 OLED Receiver
+                # 3. Broadcast newest sensor reading over LoRa to ESP32 OLED Receiver (sends nulls if disconnected)
                 self.lora.send_latest_sensor_data(sensor_data)
 
                 # 4. Check sensor threshold alerts (Debounced to max once per 60s per alert)
@@ -556,12 +556,18 @@ class PlantDetectionSystem:
                 # Prepare sensor overlay string
                 sensor_text = None
                 if self.latest_sensor_data:
-                    t = self.latest_sensor_data.get('temperature', '--')
-                    h = self.latest_sensor_data.get('humidity', '--')
-                    m = self.latest_sensor_data.get('soil_moisture', '--')
-                    mq = self.latest_sensor_data.get('mq135_raw', '--')
-                    srv = self.latest_sensor_data.get('servo_angle', '--')
-                    sensor_text = f"Sensors: T:{t}C  H:{h}%  Soil:{m}%  Air:{mq}  Pan:{srv}°"
+                    t = self.latest_sensor_data.get('temperature')
+                    h = self.latest_sensor_data.get('humidity')
+                    m = self.latest_sensor_data.get('soil_moisture')
+                    mq = self.latest_sensor_data.get('mq135_raw')
+                    srv = self.latest_sensor_data.get('servo_angle')
+
+                    t_str = f"{t}°C" if t is not None else "NULL"
+                    h_str = f"{h}%" if h is not None else "NULL"
+                    m_str = f"{m}%" if m is not None else "NULL"
+                    mq_str = str(mq) if mq is not None else "NULL"
+                    srv_str = f"{srv}°" if srv is not None else "NULL"
+                    sensor_text = f"Sensors: T:{t_str}  H:{h_str}  Soil:{m_str}  Air:{mq_str}  Pan:{srv_str}"
 
                 # Generate Annotated Frame with AI Bounding Boxes & Sensor HUD (Runs at 25-30 FPS)
                 annotated = self.detector.draw_hud(
