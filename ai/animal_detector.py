@@ -59,7 +59,19 @@ def _ensure_torchvision_shim():
         sys.modules["torchvision"] = fake_tv
         sys.modules["torchvision.ops"] = fake_tv.ops
 
-_ensure_torchvision_shim()
+def _ensure_cv2_shims():
+    if not hasattr(cv2, "imshow"):
+        cv2.imshow = lambda winname, mat: None
+    if not hasattr(cv2, "namedWindow"):
+        cv2.namedWindow = lambda winname, flags=0: None
+    if not hasattr(cv2, "resizeWindow"):
+        cv2.resizeWindow = lambda winname, width, height: None
+    if not hasattr(cv2, "destroyAllWindows"):
+        cv2.destroyAllWindows = lambda: None
+    if not hasattr(cv2, "waitKey"):
+        cv2.waitKey = lambda delay=0: -1
+
+_ensure_cv2_shims()
 
 try:
     from ultralytics import YOLO

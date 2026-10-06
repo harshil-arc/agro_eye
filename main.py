@@ -53,6 +53,21 @@ import cv2
 import numpy as np
 from typing import Optional
 
+def _ensure_cv2_shims():
+    """Ensures critical OpenCV function stubs exist so dependencies like Ultralytics never crash."""
+    if not hasattr(cv2, "imshow"):
+        cv2.imshow = lambda winname, mat: None
+    if not hasattr(cv2, "namedWindow"):
+        cv2.namedWindow = lambda winname, flags=0: None
+    if not hasattr(cv2, "resizeWindow"):
+        cv2.resizeWindow = lambda winname, width, height: None
+    if not hasattr(cv2, "destroyAllWindows"):
+        cv2.destroyAllWindows = lambda: None
+    if not hasattr(cv2, "waitKey"):
+        cv2.waitKey = lambda delay=0: -1
+
+_ensure_cv2_shims()
+
 try:
     import torch
     # Cap PyTorch intra-op threads to 2 to prevent starving OpenCV and WebRTC on Raspberry Pi
