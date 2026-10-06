@@ -356,12 +356,12 @@ class ESP32SensorReceiver:
 
     def set_hooter(self, state: bool) -> bool:
         """
-        Controls the Active-LOW Hooter Relay connected to ESP32 GPIO 26 via USB Serial.
-        state=True  -> sends 'HOOTER:ON' (ESP32 drives GPIO 26 LOW to trip relay)
-        state=False -> sends 'HOOTER:OFF' (ESP32 drives GPIO 26 HIGH to de-energize relay)
+        Controls the Hooter Relay connected to ESP32 GPIO 26 via USB Serial.
+        state=True  -> sends 'HOOTER:ON' (ESP32 drives GPIO 26 HIGH on Elephant Detection)
+        state=False -> sends 'HOOTER:OFF' (ESP32 drives GPIO 26 LOW when cleared)
         """
         cmd = "HOOTER:ON" if state else "HOOTER:OFF"
-        logger.info(f"ESP32 Relay Command: {cmd} (GPIO 26 -> {'LOW (ACTIVE)' if state else 'HIGH (INACTIVE)'})")
+        logger.info(f"ESP32 Relay Command: {cmd} (GPIO 26 -> {'HIGH (ACTIVE)' if state else 'LOW (INACTIVE)'})")
         return self.send_command(cmd)
 
     def get_latest_readings(self) -> Optional[Dict[str, Any]]:

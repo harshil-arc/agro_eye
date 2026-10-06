@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
@@ -7,7 +9,7 @@ import time
 import threading
 import cv2
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any, List
 from config import CAMERA_INDICES, CAMERA_WIDTH, CAMERA_HEIGHT, ROI_SIZE, SNAPSHOT_DIR
 from utils.logger import logger
 
@@ -24,7 +26,7 @@ class USBCamera:
         self.width = width
         self.height = height
         self.roi_size = roi_size
-        self.cap: Optional[cv2.VideoCapture] = None
+        self.cap: Any = None
         self.active_index: Optional[int] = None
         self.consecutive_errors: int = 0
         self._logged_no_cam: bool = False
@@ -74,7 +76,7 @@ class USBCamera:
 
         return candidates
 
-    def _configure_capture(self, cap: cv2.VideoCapture, try_mjpg: bool = True, custom_width: Optional[int] = None, custom_height: Optional[int] = None):
+    def _configure_capture(self, cap: Any, try_mjpg: bool = True, custom_width: Optional[int] = None, custom_height: Optional[int] = None):
         """Configures capture parameters for maximum FPS and minimum latency."""
         try:
             # 1. Single frame buffer to eliminate lag

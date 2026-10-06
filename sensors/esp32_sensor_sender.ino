@@ -11,7 +11,7 @@
  *   GPIO 34 (ADC1) Soil Moisture Sensor Analog Out (AOUT)
  *   GPIO 35 (ADC1) MQ-135 Gas / Air Quality Analog Out (AOUT)
  *   GPIO 18        Camera Pan Servo Signal Pin (PWM)
- *   GPIO 26        Hooter Active-LOW Relay Signal Pin (IN / CTL)
+ *   GPIO 26        Hooter Relay Signal Pin (HIGH = Active/ON, LOW = Inactive/OFF)
  *   VIN (5V)       Servo VCC & Relay VCC (Red Wire) - MUST BE 5V (Not 3.3V!)
  *   3.3V           DHT / Soil Sensor VCC
  *   GND            Common Ground (Black/Brown Wire)
@@ -26,7 +26,7 @@
 #define ENABLE_SOIL       true    // Set to true for Soil Moisture Sensor
 #define ENABLE_MQ135      true    // Set to true for MQ-135 Air Quality Sensor
 #define ENABLE_SERVO      true    // Set to true for Camera Pan Servo
-#define ENABLE_HOOTER     true    // Set to true for Active-LOW Hooter Relay
+#define ENABLE_HOOTER     true    // Set to true for Hooter Relay (Active-HIGH on GPIO 26)
 
 // ---------- Pin Definitions ----------
 #define DHTPIN            4       // GPIO 4 for DHT Data
@@ -35,7 +35,7 @@
 #define SOIL_PIN          34      // GPIO 34 (ADC1_CH6) for Soil Moisture
 #define MQ135_PIN         35      // GPIO 35 (ADC1_CH7) for MQ-135 Air Quality
 #define SERVO_PIN         18      // GPIO 18 for Pan Servo PWM Control
-#define HOOTER_PIN        26      // GPIO 26 for Active-LOW Relay (Elephant Alarm Hooter)
+#define HOOTER_PIN        26      // GPIO 26 for Relay (HIGH on Elephant Detection)
 
 // ---------- Calibration & Connection Thresholds (ESP32 12-bit ADC: 0 - 4095) ----------
 // Soil Moisture Sensor:
@@ -84,10 +84,10 @@ void setup() {
   analogReadResolution(12);
 
 #if ENABLE_HOOTER
-  // Active-LOW Relay: Initialize HIGH first so the relay does NOT click/trip on boot
-  digitalWrite(HOOTER_PIN, HIGH);
+  // Active-HIGH Relay: Initialize LOW first so the relay starts in the OFF/inactive state
+  digitalWrite(HOOTER_PIN, LOW);
   pinMode(HOOTER_PIN, OUTPUT);
-  digitalWrite(HOOTER_PIN, HIGH);
+  digitalWrite(HOOTER_PIN, LOW);
 #endif
 
 #if ENABLE_DHT
@@ -143,22 +143,22 @@ void loop() {
 #if ENABLE_HOOTER
       isHooterActive = true;
       lastHooterCmdTime = millis();
-      digitalWrite(HOOTER_PIN, LOW); // Active-LOW: Drive pin 26 LOW to trip relay
+      digitalWrite(HOOTER_PIN, HIGH); // Drive pin 26 HIGH on Elephant Detection
 #endif
     }
     else if (cmd.equalsIgnoreCase("HOOTER:OFF") || cmd.equalsIgnoreCase("RELAY:OFF") || cmd.equalsIgnoreCase("HOOTER_OFF") || cmd.equalsIgnoreCase("HOOTER:0")) {
 #if ENABLE_HOOTER
       isHooterActive = false;
-      digitalWrite(HOOTER_PIN, HIGH); // Active-LOW: Drive pin 26 HIGH to untrip relay
+      digitalWrite(HOOTER_PIN, LOW); // Drive pin 26 LOW when Elephant is cleared
 #endif
     }
   }
 
 #if ENABLE_HOOTER
-  // Safety Failsafe: Automatically release relay if no command received within timeout
+  // Safety Failsafe: Automatically release relay to LOW if no command received within timeout
   if (isHooterActive && (millis() - lastHooterCmdTime >= hooterSafetyTimeout)) {
     isHooterActive = false;
-    digitalWrite(HOOTER_PIN, HIGH);
+    digitalWrite(HOOTER_PIN, LOW);
   }
 #endif
 

@@ -221,7 +221,7 @@ class PlantDetectionSystem:
                 else:
                     self.consecutive_animal_frames = 0
 
-                # 5. Handle Elephant-Specific Active-LOW Hooter Alarm (ESP32 GPIO 26)
+                # 5. Handle Elephant-Specific Hooter Alarm (ESP32 GPIO 26 -> HIGH)
                 is_elephant = False
                 if animal_result.has_animals:
                     if "Elephant" in animal_result.counts or any(b.get("clean_name") == "elephant" for b in animal_result.boxes):
@@ -233,14 +233,14 @@ class PlantDetectionSystem:
                         self.last_elephant_seen_time = time.time()
                         if not self.hooter_active:
                             self.hooter_active = True
-                            logger.warning("🐘 ELEPHANT DETECTED! Triggering Active-LOW Hooter Relay on ESP32 (GPIO 26 -> LOW)...")
+                            logger.warning("🐘 ELEPHANT DETECTED! Triggering Hooter Relay on ESP32 (GPIO 26 -> HIGH)...")
                             self.sensor_mgr.set_hooter(True)
                 else:
                     self.consecutive_elephant_frames = 0
                     # Auto-turn off hooter once elephant leaves the frame after clear delay
                     if self.hooter_active and (time.time() - self.last_elephant_seen_time >= self.elephant_clear_delay):
                         self.hooter_active = False
-                        logger.info("Elephant perimeter cleared. Deactivating Hooter Relay on ESP32 (GPIO 26 -> HIGH)...")
+                        logger.info("Elephant perimeter cleared. Deactivating Hooter Relay on ESP32 (GPIO 26 -> LOW)...")
                         self.sensor_mgr.set_hooter(False)
 
                 iter_count += 1

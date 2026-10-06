@@ -17,10 +17,7 @@ sudo apt-get install -y \
     python3-opencv \
     libatlas-base-dev \
     libgl1 \
-    libglib2.0-0 \
     libgtk-3-dev \
-    libcanberra-gtk-module \
-    libcanberra-gtk3-module \
     i2c-tools \
     v4l-utils \
     spi-tools
