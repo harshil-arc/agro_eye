@@ -60,6 +60,10 @@ def _ensure_torchvision_shim():
         sys.modules["torchvision.ops"] = fake_tv.ops
 
 def _ensure_cv2_shims():
+    import sys
+    for p in ["/usr/lib/python3/dist-packages", "/usr/local/lib/python3/dist-packages"]:
+        if os.path.exists(p) and p not in sys.path:
+            sys.path.append(p)
     if not hasattr(cv2, "imshow"):
         cv2.imshow = lambda winname, mat: None
     if not hasattr(cv2, "namedWindow"):
@@ -70,6 +74,55 @@ def _ensure_cv2_shims():
         cv2.destroyAllWindows = lambda: None
     if not hasattr(cv2, "waitKey"):
         cv2.waitKey = lambda delay=0: -1
+    if not hasattr(cv2, "imread"):
+        cv2.imread = lambda filename, flags=1: None
+    if not hasattr(cv2, "imwrite"):
+        cv2.imwrite = lambda filename, img, params=None: True
+    if not hasattr(cv2, "VideoCapture"):
+        class DummyVideoCapture:
+            def __init__(self, *args, **kwargs): pass
+            def isOpened(self): return False
+            def read(self): return False, None
+            def release(self): pass
+            def set(self, *args): return False
+            def get(self, *args): return 0.0
+        cv2.VideoCapture = DummyVideoCapture
+
+    const_map = {
+        "IMREAD_COLOR": 1,
+        "IMREAD_GRAYSCALE": 0,
+        "IMREAD_UNCHANGED": -1,
+        "COLOR_BGR2RGB": 4,
+        "COLOR_RGB2BGR": 4,
+        "COLOR_BGR2GRAY": 6,
+        "COLOR_GRAY2BGR": 8,
+        "INTER_NEAREST": 0,
+        "INTER_LINEAR": 1,
+        "INTER_CUBIC": 2,
+        "INTER_AREA": 3,
+        "FONT_HERSHEY_SIMPLEX": 0,
+        "FONT_HERSHEY_PLAIN": 1,
+        "LINE_AA": 16,
+        "LINE_8": 8,
+        "LINE_4": 4,
+        "FILLED": -1,
+        "WINDOW_NORMAL": 0,
+        "WINDOW_AUTOSIZE": 1,
+        "CAP_PROP_FRAME_WIDTH": 3,
+        "CAP_PROP_FRAME_HEIGHT": 4,
+        "CAP_PROP_FPS": 5,
+        "CAP_PROP_FOURCC": 6,
+        "CAP_PROP_BUFFERSIZE": 38,
+        "CAP_V4L2": 200,
+        "CAP_ANY": 0,
+        "CAP_DSHOW": 700,
+        "CAP_MSMF": 1400
+    }
+    for k, v in const_map.items():
+        if not hasattr(cv2, k):
+            setattr(cv2, k, v)
+    if not hasattr(cv2, "VideoWriter_fourcc"):
+        cv2.VideoWriter_fourcc = lambda *args: 0
 
 _ensure_cv2_shims()
 
