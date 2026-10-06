@@ -173,16 +173,13 @@ void setup() {
   LoRa.enableCrc();
   LoRa.setSyncWord(LORA_SYNC_WORD);
 
-  // Put radio into explicit continuous receive mode
-  LoRa.receive();
-
   Serial.println(F("[OK] LoRa SX1278 initialized (433MHz, SF7, BW125, CR4/5, SyncWord 0x12)."));
   Serial.println(F("Listening for continuous telemetry..."));
   Serial.println(F("Press Pushbutton to turn ON OLED display for 15 seconds.\n"));
 }
 
 void loop() {
-  // 1. Process Incoming LoRa Packets (Continuous Reception)
+  // 1. Process Incoming LoRa Packets (Continuous Reception via Polling)
   processIncomingLoRa();
 
   // 2. Check Pushbutton (Debounced Edge Trigger)
@@ -221,7 +218,7 @@ void loop() {
 }
 
 // -------------------------------------------------------------
-// PROCESS INCOMING LORA PACKETS & RE-ARM RECEIVER
+// PROCESS INCOMING LORA PACKETS
 // -------------------------------------------------------------
 void processIncomingLoRa() {
   int packetSize = LoRa.parsePacket();
@@ -233,9 +230,6 @@ void processIncomingLoRa() {
 
     int rssi = LoRa.packetRssi();
     float snr = LoRa.packetSnr();
-
-    // Re-arm LoRa receiver immediately for the next packet
-    LoRa.receive();
 
     StaticJsonDocument<512> doc;
     DeserializationError error = deserializeJson(doc, incomingPayload);
