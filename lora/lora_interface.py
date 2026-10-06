@@ -52,10 +52,11 @@ def _probe_lora_hardware() -> Tuple[bool, str]:
             timeout=3.0
         )
         output = (res.stdout + " " + res.stderr).strip()
-        if res.returncode == 0:
-            return True, "OK"
-        else:
+        # Catch non-zero exit codes OR diagnostic messages emitted by C library
+        bad_keywords = ("unrecognized", "transceiver", "failed", "error", "exception", "cannot open", "not found")
+        if res.returncode != 0 or any(bad in output.lower() for bad in bad_keywords):
             return False, output or f"Transceiver probe exited with code {res.returncode}"
+        return True, "OK"
     except subprocess.TimeoutExpired:
         return False, "Hardware probe timed out (SPI bus unresponsive)"
     except Exception as e:
