@@ -55,6 +55,7 @@ class LoRaAlertManager:
 
         packet_str = json.dumps(payload, separators=(',', ':'))
         if not self.lora.is_ready:
+            logger.warning(f"LoRa TX Skipped (Transceiver not ready: {self.lora.last_error or 'Hardware uninitialized / Check SPI'})")
             return False
         success = self.lora.transmit(packet_str)
         if not success:

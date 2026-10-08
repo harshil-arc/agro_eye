@@ -162,7 +162,11 @@ class DirectSPILoRaDriver:
     REG_PREAMBLE_LSB = 0x21
     REG_PAYLOAD_LENGTH = 0x22
     REG_MODEM_CONFIG_3 = 0x26
+    REG_DETECT_OPTIMIZE = 0x31
+    REG_INVERT_IQ = 0x33
+    REG_DETECTION_THRESHOLD = 0x37
     REG_SYNC_WORD = 0x39
+    REG_INVERT_IQ2 = 0x3B
     REG_VERSION = 0x42
     REG_PA_DAC = 0x4D
 
@@ -191,65 +195,69 @@ class DirectSPILoRaDriver:
         is_low_freq = (freq_hz < 525000000)
         self.op_mode_base = self.MODE_LONG_RANGE_MODE | (0x08 if is_low_freq else 0x00)
 
-        try:
+        # Candidate SPI buses and chip-selects to scan
+        spi_targets = [(0, 0), (0, 1), (1, 0), (1, 1)] if os.name != "nt" else [(0, 0)]
+
+        for bus, dev in spi_targets:
+            self.bus = bus
+            self.device = dev
+            self.version = 0
+
             # 1. Try python-spidev if installed
             try:
                 import spidev
                 self.spi = spidev.SpiDev()
                 self.spi.open(self.bus, self.device)
-                self.spi.max_speed_hz = 5000000  # 5 MHz
+                self.spi.max_speed_hz = 1000000  # 1 MHz
                 self.spi.mode = 0
                 self.version = self._read_reg(self.REG_VERSION)
             except Exception:
                 self.spi = None
 
             # 2. Native Linux raw ioctl fallback (zero dependencies)
-            if self.version != 0x12:
-                try:
-                    raw_spi = RawIoctlSPIDev(self.bus, self.device)
-                    if raw_spi.open(5000000):
-                        self.spi = raw_spi
-                        self.version = self._read_reg(self.REG_VERSION)
-                except Exception:
-                    pass
-
-            # 3. Try device 1 (CE1) if CE0 failed
-            if self.version != 0x12 and self.device == 0:
+            if self.version != 0x12 and os.name != "nt":
                 try:
                     if self.spi:
-                        self.spi.close()
-                    raw_spi = RawIoctlSPIDev(self.bus, 1)
-                    if raw_spi.open(5000000):
+                        try:
+                            self.spi.close()
+                        except Exception:
+                            pass
+                    raw_spi = RawIoctlSPIDev(self.bus, self.device)
+                    if raw_spi.open(1000000):
                         self.spi = raw_spi
-                        self.device = 1
                         self.version = self._read_reg(self.REG_VERSION)
                 except Exception:
                     pass
 
-            if self.version != 0x12:
-                logger.warning(f"SX127x SPI read version=0x{self.version:02X} (Expected 0x12). Check wiring.")
-                return False
+            if self.version == 0x12:
+                logger.info(f"LoRa SX127x found on SPI bus {self.bus}, device {self.device} (Silicon Version: 0x12)")
+                break
 
-            # 4. Put into Sleep mode to switch to LoRa mode
+        if self.version != 0x12:
+            logger.warning(f"SX127x SPI read version=0x{self.version:02X} (Expected 0x12). Check wiring.")
+            return False
+
+        try:
+            # Put into Sleep mode to switch to LoRa mode
             self._write_reg(self.REG_OP_MODE, self.MODE_LONG_RANGE_MODE | self.MODE_SLEEP)
             time.sleep(0.02)
             self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_SLEEP)
             time.sleep(0.02)
 
-            # 5. Put into Standby mode
+            # Put into Standby mode
             self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_STDBY)
             time.sleep(0.02)
 
-            # 6. Unmask IRQs
+            # Unmask IRQs
             self._write_reg(0x11, 0x00)  # REG_IRQ_FLAGS_MASK
 
-            # 7. Set Frequency
+            # Set Frequency
             frf = int((freq_hz << 19) / 32000000)
             self._write_reg(self.REG_FRF_MSB, (frf >> 16) & 0xFF)
             self._write_reg(self.REG_FRF_MID, (frf >> 8) & 0xFF)
             self._write_reg(self.REG_FRF_LSB, frf & 0xFF)
 
-            # 8. Set Power (PA_BOOST)
+            # Set Power (PA_BOOST)
             if power_dbm > 17:
                 self._write_reg(self.REG_PA_DAC, 0x87)
                 self._write_reg(self.REG_PA_CONFIG, 0x80 | 0x70 | min(15, max(0, power_dbm - 5)))
@@ -259,7 +267,7 @@ class DirectSPILoRaDriver:
             self._write_reg(self.REG_OCP, 0x2B)  # 100mA current limit
             self._write_reg(self.REG_LNA, 0x23)  # Maximum LNA gain + boost
 
-            # 9. Set Bandwidth (125kHz=0x70), Coding Rate (4/5=0x02), Explicit Header (0x00)
+            # Set Bandwidth (125kHz=0x70), Coding Rate (4/5=0x02), Explicit Header (0x00)
             bw_val = 0x70 if bw_khz <= 125 else (0x80 if bw_khz <= 250 else 0x90)
             cr_val = 0x02  # CR 4/5
             if cr == 2 or cr == 6:
@@ -270,23 +278,31 @@ class DirectSPILoRaDriver:
                 cr_val = 0x08  # CR 4/8
             self._write_reg(self.REG_MODEM_CONFIG_1, bw_val | cr_val | 0x00)
 
-            # 10. Set Spreading Factor & CRC enabled (0x04)
+            # Set Spreading Factor & CRC enabled (0x04)
             sf_val = (sf & 0x0F) << 4
             self._write_reg(self.REG_MODEM_CONFIG_2, sf_val | 0x04)
 
-            # 11. Set AGC Auto On (0x04) & Low Data Rate Optimize (0x08 when symbol duration > 16ms)
+            # Set AGC Auto On (0x04) & Low Data Rate Optimize (0x08 when symbol duration > 16ms)
             sym_duration = (1 << sf) / (bw_khz * 1000.0)
             ldro = 0x08 if sym_duration > 0.016 else 0x00
             self._write_reg(self.REG_MODEM_CONFIG_3, ldro | 0x04)
 
-            # 12. Set Preamble (8 symbols)
+            # Configure Detection Optimize and Detection Threshold for SF7-SF12
+            self._write_reg(self.REG_DETECT_OPTIMIZE, 0x03)
+            self._write_reg(self.REG_DETECTION_THRESHOLD, 0x0A)
+
+            # Standard Non-inverted IQ (matches Arduino LoRa.h peer-to-peer)
+            self._write_reg(self.REG_INVERT_IQ, 0x27)
+            self._write_reg(self.REG_INVERT_IQ2, 0x1D)
+
+            # Set Preamble (8 symbols)
             self._write_reg(self.REG_PREAMBLE_MSB, 0x00)
             self._write_reg(self.REG_PREAMBLE_LSB, 0x08)
 
-            # 13. Set Sync Word
+            # Set Sync Word
             self._write_reg(self.REG_SYNC_WORD, sync_word & 0xFF)
 
-            # 14. Set FIFO base
+            # Set FIFO base
             self._write_reg(self.REG_FIFO_TX_BASE_ADDR, 0x00)
             self._write_reg(self.REG_FIFO_RX_BASE_ADDR, 0x00)
             self._write_reg(self.REG_FIFO_ADDR_PTR, 0x00)
@@ -456,7 +472,7 @@ class LoRaInterface:
     def transmit(self, message: str) -> bool:
         """Transmits a raw string/JSON packet over LoRa."""
         if not self.is_ready or self.driver is None:
-            logger.debug(f"LoRa TX Skipped (Transceiver not ready: {self.last_error or 'Hardware uninitialized'})")
+            logger.warning(f"LoRa TX Skipped (Transceiver not ready: {self.last_error or 'Hardware uninitialized / Check SPI'})")
             return False
 
         try:
