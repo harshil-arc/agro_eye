@@ -37,22 +37,18 @@
 #define SERVO_PIN         18      // GPIO 18 for Pan Servo PWM Control
 #define HOOTER_PIN        26      // GPIO 26 for Relay (HIGH on Elephant Detection)
 
-// ---------- Calibration & Connection Thresholds (ESP32 12-bit ADC: 0 - 4095) ----------
+// ---------- Calibration Parameters (ESP32 12-bit ADC: 0 - 4095) ----------
 // Soil Moisture Sensor:
-// Disconnected / open circuit: raw < 300 (near 0)
-// In air (dry): ~3200 - 4095 (0% moisture)
-// In water (wet): ~1200 - 1600 (100% moisture)
-#define SOIL_DISCONNECTED_RAW  300
-#define SOIL_DRY_RAW           3600
-#define SOIL_WET_RAW           1400
-
-// MQ-135 Air Quality Sensor:
-// Disconnected / unpowered: raw < 100 (near 0.0V)
-// In clean ambient air: ~200 - 1500 (> 0.1V)
-#define MQ135_DISCONNECTED_RAW 100
+// In dry air: ~3500 - 4095 (0% moisture)
+// In water: ~1200 - 1500 (100% moisture)
+#define SOIL_DRY_RAW           3500
+#define SOIL_WET_RAW           1200
 
 #if ENABLE_DHT
 DHT dht(DHTPIN, DHTTYPE);
+float lastGoodTemp = 28.0;
+float lastGoodHum = 50.0;
+bool hasReadDHTOnce = false;
 #endif
 
 #if ENABLE_SERVO
@@ -80,8 +76,9 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  // Configure ADC resolution to 12 bits (0-4095)
+  // Configure ADC resolution to 12 bits (0-4095) and full 3.3V attenuation
   analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
 
 #if ENABLE_HOOTER
   // Active-HIGH Relay: Initialize LOW first so the relay starts in the OFF/inactive state
@@ -190,45 +187,44 @@ void readAndTransmitTelemetry() {
   float humidity = 0.0;
   bool dhtValid = false;
 
-  // 1. Read DHT with retry loop
+  // 1. Read DHT Sensor
 #if ENABLE_DHT
-  for (int attempt = 0; attempt < 3; attempt++) {
-    humidity = dht.readHumidity();
-    temperature = dht.readTemperature();
-    if (!isnan(humidity) && !isnan(temperature) && humidity > 0.0 && temperature > -40.0 && temperature < 85.0) {
-      dhtValid = true;
-      break;
-    }
-    delay(50);
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  if (!isnan(h) && !isnan(t) && h > 0.0 && t > -40.0 && t < 85.0) {
+    temperature = t;
+    humidity = h;
+    lastGoodTemp = t;
+    lastGoodHum = h;
+    hasReadDHTOnce = true;
+    dhtValid = true;
+  } else if (hasReadDHTOnce) {
+    // Preserve last known valid reading across brief 1-wire timing hiccups
+    temperature = lastGoodTemp;
+    humidity = lastGoodHum;
+    dhtValid = true;
   }
 #endif
 
   // 2. Read Soil Moisture (Analog GPIO 34)
   int soilRaw = 0;
   float soilPercent = 0.0;
-  bool soilValid = false;
 #if ENABLE_SOIL
   soilRaw = analogRead(SOIL_PIN);
-  // Sensor is considered physically connected when raw reading is >= SOIL_DISCONNECTED_RAW
-  if (soilRaw >= SOIL_DISCONNECTED_RAW) {
-    soilValid = true;
+  if (soilRaw > SOIL_WET_RAW) {
     soilPercent = ((float)(SOIL_DRY_RAW - soilRaw) / (float)(SOIL_DRY_RAW - SOIL_WET_RAW)) * 100.0;
-    if (soilPercent < 0.0) soilPercent = 0.0;
-    if (soilPercent > 100.0) soilPercent = 100.0;
+  } else {
+    soilPercent = 100.0;
   }
+  soilPercent = constrain(soilPercent, 0.0, 100.0);
 #endif
 
   // 3. Read MQ-135 Air Quality (Analog GPIO 35)
   int mqRaw = 0;
   float mqVoltage = 0.0;
-  bool mqValid = false;
 #if ENABLE_MQ135
   mqRaw = analogRead(MQ135_PIN);
   mqVoltage = (mqRaw / 4095.0) * 3.3; // ESP32 ADC reference is 3.3V
-  // MQ-135 is considered physically connected when raw reading is >= MQ135_DISCONNECTED_RAW
-  if (mqRaw >= MQ135_DISCONNECTED_RAW) {
-    mqValid = true;
-  }
 #endif
 
   // 4. Output Clean JSON Line to USB Serial
@@ -244,27 +240,19 @@ void readAndTransmitTelemetry() {
   }
 
 #if ENABLE_SOIL
-  if (soilValid) {
-    Serial.print(",\"soil_moisture\":");
-    Serial.print(soilPercent, 1);
-    Serial.print(",\"soil_raw\":");
-    Serial.print(soilRaw);
-  } else {
-    Serial.print(",\"soil_moisture\":null,\"soil_raw\":null");
-  }
+  Serial.print(",\"soil_moisture\":");
+  Serial.print(soilPercent, 1);
+  Serial.print(",\"soil_raw\":");
+  Serial.print(soilRaw);
 #else
   Serial.print(",\"soil_moisture\":null,\"soil_raw\":null");
 #endif
 
 #if ENABLE_MQ135
-  if (mqValid) {
-    Serial.print(",\"mq135_raw\":");
-    Serial.print(mqRaw);
-    Serial.print(",\"mq135_voltage\":");
-    Serial.print(mqVoltage, 2);
-  } else {
-    Serial.print(",\"mq135_raw\":null,\"mq135_voltage\":null");
-  }
+  Serial.print(",\"mq135_raw\":");
+  Serial.print(mqRaw);
+  Serial.print(",\"mq135_voltage\":");
+  Serial.print(mqVoltage, 2);
 #else
   Serial.print(",\"mq135_raw\":null,\"mq135_voltage\":null");
 #endif
