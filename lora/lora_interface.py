@@ -27,12 +27,72 @@ for candidate_dir in CANDIDATE_DIRS:
         sys.path.insert(0, candidate_dir)
 
 
+def _hardware_reset_sx127x(rst_pin: int = 25):
+    """
+    Pulses the SX127x Hardware Reset pin (GPIO 25 / Pin 22) Active-LOW (15ms)
+    and then drives it HIGH (30ms). This releases the SX127x from hardware reset.
+    """
+    if os.name == "nt":
+        return
+
+    # 1. Try pinctrl CLI (standard on Raspberry Pi OS Bookworm / Pi 5)
+    try:
+        subprocess.run(["pinctrl", "set", str(rst_pin), "op", "dl"], capture_output=True, timeout=0.5)
+        time.sleep(0.02)
+        subprocess.run(["pinctrl", "set", str(rst_pin), "op", "dh"], capture_output=True, timeout=0.5)
+        time.sleep(0.03)
+        return
+    except Exception:
+        pass
+
+    # 2. Try raspi-gpio CLI (legacy RPi tool)
+    try:
+        subprocess.run(["raspi-gpio", "set", str(rst_pin), "op", "dl"], capture_output=True, timeout=0.5)
+        time.sleep(0.02)
+        subprocess.run(["raspi-gpio", "set", str(rst_pin), "op", "dh"], capture_output=True, timeout=0.5)
+        time.sleep(0.03)
+        return
+    except Exception:
+        pass
+
+    # 3. Try gpiod / libgpiod
+    try:
+        import gpiod
+        chip_name = "gpiochip4" if os.path.exists("/dev/gpiochip4") else "0"
+        chip = gpiod.Chip(chip_name)
+        line = chip.get_line(rst_pin)
+        line.request(consumer="lora_rst", type=gpiod.LINE_REQ_DIR_OUT)
+        line.set_value(0)
+        time.sleep(0.02)
+        line.set_value(1)
+        time.sleep(0.03)
+        line.release()
+        chip.close()
+        return
+    except Exception:
+        pass
+
+    # 4. Try RPi.GPIO
+    try:
+        import RPi.GPIO as GPIO
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(rst_pin, GPIO.OUT)
+        GPIO.output(rst_pin, GPIO.LOW)
+        time.sleep(0.02)
+        GPIO.output(rst_pin, GPIO.HIGH)
+        time.sleep(0.03)
+    except Exception:
+        pass
+
+
 def _probe_lora_hardware() -> Tuple[bool, str]:
     """
     Safely tests LoRa transceiver responsiveness in an isolated subprocess.
     This prevents any C-level exit(1) in loralib.initialize() from abruptly
     killing the main application when wiring is loose or SPI is disabled.
     """
+    _hardware_reset_sx127x(25)
     paths_init = f"import sys\nfor p in {repr(CANDIDATE_DIRS)}:\n    if p not in sys.path:\n        sys.path.insert(0, p)\n"
     probe_code = (
         f"{paths_init}"
@@ -194,6 +254,9 @@ class DirectSPILoRaDriver:
         # Bit 3 (0x08) of REG_OP_MODE is LowFrequencyModeOn for 410-525 MHz band
         is_low_freq = (freq_hz < 525000000)
         self.op_mode_base = self.MODE_LONG_RANGE_MODE | (0x08 if is_low_freq else 0x00)
+
+        # Pulse Hardware Reset line (GPIO 25 / Pin 22) to take transceiver out of reset
+        _hardware_reset_sx127x(25)
 
         # Candidate SPI buses and chip-selects to scan
         spi_targets = [(0, 0), (0, 1), (1, 0), (1, 1)] if os.name != "nt" else [(0, 0)]
