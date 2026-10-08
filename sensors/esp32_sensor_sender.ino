@@ -74,6 +74,7 @@ const unsigned long readInterval = 2000; // 2 seconds between telemetry packets
 
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(50); // Fast non-blocking timeout for commands
   delay(500);
 
   // Configure ADC resolution to 12 bits (0-4095) and full 3.3V attenuation
@@ -82,7 +83,6 @@ void setup() {
 
 #if ENABLE_HOOTER
   // Active-HIGH Relay: Initialize LOW first so the relay starts in the OFF/inactive state
-  digitalWrite(HOOTER_PIN, LOW);
   pinMode(HOOTER_PIN, OUTPUT);
   digitalWrite(HOOTER_PIN, LOW);
 #endif
@@ -103,7 +103,7 @@ void setup() {
   panServo.write(currentServoAngle);
 #endif
 
-  Serial.println("{\"status\":\"ESP32_READY\",\"baud\":115200,\"servo_angle\":90,\"hooter\":\"OFF\"}");
+  Serial.println("{\"status\":\"ESP32_READY\",\"baud\":115200,\"servo_angle\":90,\"hooter\":\"OFF\",\"relay_pin\":26}");
   Serial.flush();
 }
 
@@ -141,12 +141,16 @@ void loop() {
       isHooterActive = true;
       lastHooterCmdTime = millis();
       digitalWrite(HOOTER_PIN, HIGH); // Drive pin 26 HIGH on Elephant Detection
+      Serial.println("{\"event\":\"HOOTER_TRIGGER\",\"hooter\":\"ON\",\"relay_pin\":26,\"state\":\"HIGH\"}");
+      Serial.flush();
 #endif
     }
     else if (cmd.equalsIgnoreCase("HOOTER:OFF") || cmd.equalsIgnoreCase("RELAY:OFF") || cmd.equalsIgnoreCase("HOOTER_OFF") || cmd.equalsIgnoreCase("HOOTER:0")) {
 #if ENABLE_HOOTER
       isHooterActive = false;
       digitalWrite(HOOTER_PIN, LOW); // Drive pin 26 LOW when Elephant is cleared
+      Serial.println("{\"event\":\"HOOTER_CLEARED\",\"hooter\":\"OFF\",\"relay_pin\":26,\"state\":\"LOW\"}");
+      Serial.flush();
 #endif
     }
   }

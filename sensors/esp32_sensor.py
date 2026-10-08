@@ -408,14 +408,16 @@ class ESP32SensorReceiver:
     def send_command(self, cmd: str) -> bool:
         """Sends a text command to ESP32 over USB Serial."""
         if not self.ser or not self.ser.is_open:
+            logger.warning(f"Cannot send command '{cmd}' to ESP32: USB Serial port is not connected.")
             return False
         try:
             cmd_bytes = (cmd.strip() + "\n").encode("utf-8")
             self.ser.write(cmd_bytes)
             self.ser.flush()
+            logger.info(f"-> Transmitted to ESP32 ({self.connected_port}): {cmd.strip()}")
             return True
         except Exception as e:
-            logger.debug(f"Failed to send command to ESP32: {e}")
+            logger.error(f"Failed to send command '{cmd}' to ESP32: {e}")
             return False
 
     def send_servo_angle(self, angle: int) -> bool:
@@ -457,5 +459,5 @@ class ESP32SensorReceiver:
                     }
                 return None
             res = dict(self.latest_data)
-            res["is_connected"] = self.is_connected()
+            res["is_connected"] = self.is_connected() or bool(self.latest_data)
             return res
