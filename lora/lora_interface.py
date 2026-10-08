@@ -231,12 +231,14 @@ class DirectSPILoRaDriver:
                 return False
 
             # 4. Put into Sleep mode to switch to LoRa mode
+            self._write_reg(self.REG_OP_MODE, self.MODE_LONG_RANGE_MODE | self.MODE_SLEEP)
+            time.sleep(0.02)
             self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_SLEEP)
-            time.sleep(0.01)
+            time.sleep(0.02)
 
             # 5. Put into Standby mode
             self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_STDBY)
-            time.sleep(0.01)
+            time.sleep(0.02)
 
             # 6. Unmask IRQs
             self._write_reg(0x11, 0x00)  # REG_IRQ_FLAGS_MASK
@@ -307,11 +309,13 @@ class DirectSPILoRaDriver:
         try:
             # Standby mode
             self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_STDBY)
+            time.sleep(0.005)
 
             # Clear IRQ flags
             self._write_reg(self.REG_IRQ_FLAGS, 0xFF)
 
             # Reset FIFO ptr to TX base
+            self._write_reg(self.REG_FIFO_TX_BASE_ADDR, 0x00)
             self._write_reg(self.REG_FIFO_ADDR_PTR, 0x00)
 
             # Write payload bytes
@@ -325,14 +329,19 @@ class DirectSPILoRaDriver:
             # Dynamic timeout calculated from estimated Time-on-Air (ToA)
             sym_duration = (1 << self.sf) / (self.bw_khz * 1000.0)
             est_toa = (8 + 4.25 + len(raw_bytes) * 2.5) * sym_duration
-            timeout = max(3.5, est_toa * 3.0 + 1.0)
+            timeout = max(3.5, est_toa * 3.0 + 1.5)
 
-            # Wait for TxDone IRQ flag (bit 3)
+            # Wait for TxDone IRQ flag (bit 3) or auto-transition to Standby
             start_t = time.time()
             tx_done = False
             while (time.time() - start_t) < timeout:
                 irq = self._read_reg(self.REG_IRQ_FLAGS)
                 if irq & 0x08:  # TxDone
+                    tx_done = True
+                    break
+                # Check if SX127x automatically completed TX and returned to STDBY (mode 0x01)
+                cur_mode = self._read_reg(self.REG_OP_MODE) & 0x07
+                if cur_mode == self.MODE_STDBY:
                     tx_done = True
                     break
                 time.sleep(0.01)

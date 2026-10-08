@@ -96,7 +96,21 @@ class ESP32SensorReceiver:
 
             for baud in candidate_bauds:
                 try:
-                    self.ser = serial.Serial(port_name, baud, timeout=1.5)
+                    self.ser = serial.Serial(
+                        port_name,
+                        baud,
+                        timeout=1.0,
+                        write_timeout=1.0,
+                        dsrdtr=False,
+                        rtscts=False
+                    )
+                    # Explicitly release DTR and RTS so ESP32 auto-reset circuit does not freeze CPU in reset/bootloader
+                    try:
+                        self.ser.dtr = False
+                        self.ser.rts = False
+                    except Exception:
+                        pass
+
                     self.connected_port = port_name
                     self.baudrate = baud
                     self.last_error = None
@@ -419,9 +433,29 @@ class ESP32SensorReceiver:
         logger.info(f"ESP32 Relay Command: {cmd} (GPIO 26 -> {'HIGH (ACTIVE)' if state else 'LOW (INACTIVE)'})")
         return self.send_command(cmd)
 
+    def is_connected(self) -> bool:
+        """Returns True if USB serial port is currently open."""
+        return bool(self.ser and self.ser.is_open)
+
     def get_latest_readings(self) -> Optional[Dict[str, Any]]:
         """Returns the most recent genuine reading from the ESP32 stream if available."""
         with self.lock:
             if not self.latest_data:
+                if self.is_connected():
+                    return {
+                        "source": "esp32_serial",
+                        "temperature": None,
+                        "humidity": None,
+                        "soil_moisture": None,
+                        "soil_raw": None,
+                        "mq135_raw": None,
+                        "mq135_voltage": None,
+                        "servo_angle": self.cached_readings.get("servo_angle", 90),
+                        "servo_mode": self.cached_readings.get("servo_mode", "auto"),
+                        "hooter": self.cached_readings.get("hooter", "OFF"),
+                        "is_connected": True
+                    }
                 return None
-            return dict(self.latest_data)
+            res = dict(self.latest_data)
+            res["is_connected"] = self.is_connected()
+            return res
