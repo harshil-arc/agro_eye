@@ -176,8 +176,21 @@ class DirectSPILoRaDriver:
         self.device = device
         self.spi = None
         self.version = 0
+        self.freq_hz = 433000000
+        self.sf = 7
+        self.bw_khz = 125
+        self.cr = 1
+        self.op_mode_base = self.MODE_LONG_RANGE_MODE | 0x08  # Default Low Frequency Mode (433MHz)
 
     def open(self, freq_hz: int = 433000000, sf: int = 7, bw_khz: int = 125, cr: int = 1, sync_word: int = 0x12, power_dbm: int = 17) -> bool:
+        self.freq_hz = freq_hz
+        self.sf = sf
+        self.bw_khz = bw_khz
+        self.cr = cr
+        # Bit 3 (0x08) of REG_OP_MODE is LowFrequencyModeOn for 410-525 MHz band
+        is_low_freq = (freq_hz < 525000000)
+        self.op_mode_base = self.MODE_LONG_RANGE_MODE | (0x08 if is_low_freq else 0x00)
+
         try:
             # 1. Try python-spidev if installed
             try:
@@ -218,47 +231,63 @@ class DirectSPILoRaDriver:
                 return False
 
             # 4. Put into Sleep mode to switch to LoRa mode
-            self._write_reg(self.REG_OP_MODE, self.MODE_LONG_RANGE_MODE | self.MODE_SLEEP)
+            self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_SLEEP)
             time.sleep(0.01)
 
             # 5. Put into Standby mode
-            self._write_reg(self.REG_OP_MODE, self.MODE_LONG_RANGE_MODE | self.MODE_STDBY)
+            self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_STDBY)
             time.sleep(0.01)
 
-            # 6. Set Frequency
+            # 6. Unmask IRQs
+            self._write_reg(0x11, 0x00)  # REG_IRQ_FLAGS_MASK
+
+            # 7. Set Frequency
             frf = int((freq_hz << 19) / 32000000)
             self._write_reg(self.REG_FRF_MSB, (frf >> 16) & 0xFF)
             self._write_reg(self.REG_FRF_MID, (frf >> 8) & 0xFF)
             self._write_reg(self.REG_FRF_LSB, frf & 0xFF)
 
-            # 7. Set Power (PA_BOOST)
-            self._write_reg(self.REG_PA_CONFIG, 0x80 | 0x0F)
-            self._write_reg(self.REG_PA_DAC, 0x84)
-            self._write_reg(self.REG_OCP, 0x2B)
-            self._write_reg(self.REG_LNA, 0x23)
+            # 8. Set Power (PA_BOOST)
+            if power_dbm > 17:
+                self._write_reg(self.REG_PA_DAC, 0x87)
+                self._write_reg(self.REG_PA_CONFIG, 0x80 | 0x70 | min(15, max(0, power_dbm - 5)))
+            else:
+                self._write_reg(self.REG_PA_DAC, 0x84)
+                self._write_reg(self.REG_PA_CONFIG, 0x80 | 0x70 | min(15, max(0, power_dbm - 2)))
+            self._write_reg(self.REG_OCP, 0x2B)  # 100mA current limit
+            self._write_reg(self.REG_LNA, 0x23)  # Maximum LNA gain + boost
 
-            # 8. Set Bandwidth (125kHz=0x70), Coding Rate (4/5=0x02), Explicit Header (0x00)
-            bw_val = 0x70 if bw_khz <= 125 else 0x80
-            cr_val = (cr & 0x07) << 1 if cr > 0 else 0x02
+            # 9. Set Bandwidth (125kHz=0x70), Coding Rate (4/5=0x02), Explicit Header (0x00)
+            bw_val = 0x70 if bw_khz <= 125 else (0x80 if bw_khz <= 250 else 0x90)
+            cr_val = 0x02  # CR 4/5
+            if cr == 2 or cr == 6:
+                cr_val = 0x04  # CR 4/6
+            elif cr == 3 or cr == 7:
+                cr_val = 0x06  # CR 4/7
+            elif cr == 4 or cr == 8:
+                cr_val = 0x08  # CR 4/8
             self._write_reg(self.REG_MODEM_CONFIG_1, bw_val | cr_val | 0x00)
 
-            # 9. Set Spreading Factor (SF7=0x70) & CRC enabled (0x04)
+            # 10. Set Spreading Factor & CRC enabled (0x04)
             sf_val = (sf & 0x0F) << 4
             self._write_reg(self.REG_MODEM_CONFIG_2, sf_val | 0x04)
 
-            # 10. Set AGC Auto On
-            self._write_reg(self.REG_MODEM_CONFIG_3, 0x08)
+            # 11. Set AGC Auto On (0x04) & Low Data Rate Optimize (0x08 when symbol duration > 16ms)
+            sym_duration = (1 << sf) / (bw_khz * 1000.0)
+            ldro = 0x08 if sym_duration > 0.016 else 0x00
+            self._write_reg(self.REG_MODEM_CONFIG_3, ldro | 0x04)
 
-            # 11. Set Preamble (8 symbols)
+            # 12. Set Preamble (8 symbols)
             self._write_reg(self.REG_PREAMBLE_MSB, 0x00)
             self._write_reg(self.REG_PREAMBLE_LSB, 0x08)
 
-            # 12. Set Sync Word
+            # 13. Set Sync Word
             self._write_reg(self.REG_SYNC_WORD, sync_word & 0xFF)
 
-            # 13. Set FIFO base
+            # 14. Set FIFO base
             self._write_reg(self.REG_FIFO_TX_BASE_ADDR, 0x00)
             self._write_reg(self.REG_FIFO_RX_BASE_ADDR, 0x00)
+            self._write_reg(self.REG_FIFO_ADDR_PTR, 0x00)
 
             return True
         except Exception as e:
@@ -277,7 +306,7 @@ class DirectSPILoRaDriver:
             return False
         try:
             # Standby mode
-            self._write_reg(self.REG_OP_MODE, self.MODE_LONG_RANGE_MODE | self.MODE_STDBY)
+            self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_STDBY)
 
             # Clear IRQ flags
             self._write_reg(self.REG_IRQ_FLAGS, 0xFF)
@@ -291,12 +320,17 @@ class DirectSPILoRaDriver:
             self.spi.xfer2([self.REG_FIFO | 0x80] + list(raw_bytes))
 
             # Put in TX mode
-            self._write_reg(self.REG_OP_MODE, self.MODE_LONG_RANGE_MODE | self.MODE_TX)
+            self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_TX)
+
+            # Dynamic timeout calculated from estimated Time-on-Air (ToA)
+            sym_duration = (1 << self.sf) / (self.bw_khz * 1000.0)
+            est_toa = (8 + 4.25 + len(raw_bytes) * 2.5) * sym_duration
+            timeout = max(3.5, est_toa * 3.0 + 1.0)
 
             # Wait for TxDone IRQ flag (bit 3)
             start_t = time.time()
             tx_done = False
-            while (time.time() - start_t) < 2.0:
+            while (time.time() - start_t) < timeout:
                 irq = self._read_reg(self.REG_IRQ_FLAGS)
                 if irq & 0x08:  # TxDone
                     tx_done = True
@@ -305,7 +339,7 @@ class DirectSPILoRaDriver:
 
             # Clear IRQ & return to standby
             self._write_reg(self.REG_IRQ_FLAGS, 0xFF)
-            self._write_reg(self.REG_OP_MODE, self.MODE_LONG_RANGE_MODE | self.MODE_STDBY)
+            self._write_reg(self.REG_OP_MODE, self.op_mode_base | self.MODE_STDBY)
             return tx_done
         except Exception as e:
             logger.error(f"Direct SPI TX Error: {e}")
